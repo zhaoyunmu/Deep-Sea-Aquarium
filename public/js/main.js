@@ -1,0 +1,1291 @@
+// ============ 万灵缸 · 主循环 ============
+import { TAU, el, rand, clamp, rgba, SCALE } from './util.js';
+import { SPECIES, pickSpecies, RARITY_COLORS, RARITY_NAMES } from './species.js';
+import { World } from './world.js';
+import { Fish, STAGE_NAMES, STAGE_NUT, makePasserPersona } from './fish.js';
+import { Jellyfish } from './jellyfish.js';
+import { Food, Egg, Sparkles, DustMote } from './food.js';
+import { Collection } from './collection.js';
+import { Weather } from './weather.js';
+import { Bottle, fetchNote, maybeEnrich } from './bottle.js';
+import { Star, generateLastWords } from './star.js';
+import { WhaleStone } from './stone.js';
+import { AI, ChatPanel, generatePersona, fallbackPersona } from './ai.js';
+import * as UI from './ui.js';
+import { playSfx, prefs, setMusic, setSfx } from './audio.js';
+
+// ---------- 画布 ----------
+const canvas = el('tank');
+const ctx = canvas.getContext('2d');
+let W = 0, H = 0, DPR = 1;
+
+// ---------- 世界状态 ----------
+const world = new World();
+world.whaleOnSpawn = () => UI.toast('🐋 远处有一道巨大的影子游过……', true);
+
+const weather = new Weather(W, H);
+weather.onLightning = () => {
+  playSfx('thunder');
+  for (const f of fishes) f.scare = rand(0.5, 1);
+  for (let i = 0; i < 10; i++) {
+    spawnPlankton(rand(0, W), rand(H * 0.2, H * 0.7), 0, 0, 3);
+  }
+};
+// 朝霞不出门，晚霞行千里
+weather.onFireCloud = (when) => {
+  UI.toast(
+    when === 'dawn'
+      ? '🌅 黎明火烧云烧红了天际——今天多半有雨'
+      : '🌇 黄昏火烧云——夜里恐怕有雨，明天倒是晴天',
+    true,
+  );
+};
+
+const collection = new Collection();
+window.__wanling = collection; // pickSpecies 用于挑未收录物种
+
+const sparkles = new Sparkles();
+const foods = [];
+const eggs = [];
+const dusts = [];      // 悬浮的发光尘（成年满营养鱼产出，可点击收集）
+const ripples = [];
+const plankton = [];   // 夜光藻
+const bottles = [];    // 海里的漂流瓶（可有多只）
+let bottleTimer = rand(130, 240); // 漂流瓶出现频率：约 2~4 分钟一只
+const stars = [];      // 长眠鱼儿的星辰
+const starQueue = [];  // 待降落的星辰 { x, timer, info, noteP }
+const whaleStone = new WhaleStone(); // 鲸之石：嵌在海床里的石碑
+
+const fishes = [];
+
+function resize() {
+  DPR = Math.min(2, window.devicePixelRatio || 1);
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width = W * DPR;
+  canvas.height = H * DPR;
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  world.resize(W, H);
+  weather.resize(W, H);
+  // 窗口变了，沉底的卵/瓶子/星星/饲料跟着挪到新沙床上（否则会被埋进沙里）
+  for (const e of eggs) if (e.landed) e.y = world.floorY - 12;
+  for (const f of foods) f.y = Math.min(f.y, world.floorY - 5);
+  for (const b of bottles) if (b.landed) b.y = world.floorY - 10;
+  for (const st of stars) if (st.landed) st.y = world.floorY - 8;
+  whaleStone.place(W, world);
+  applyUIScale();
+}
+
+resize();
+
+const jellies = [
+  new Jellyfish(W, H, 0),
+  new Jellyfish(W, H, 1),
+];
+
+const cursor = { x: -999, y: -999, active: false, down: false, vx: 0, vy: 0, speed: 0 };
+const EGG_COST = 30;
+const MAX_FISH = 26;
+
+// 显示自家鱼名字的开关（与路过鱼名字区分）
+const SHOW_NAMES_KEY = 'wanling.showFishNames';
+function loadShowNames() {
+  try { return localStorage.getItem(SHOW_NAMES_KEY) === '1'; } catch { return false; }
+}
+let showFishNames = loadShowNames();
+
+// HUD 随窗口大小缩放
+function applyUIScale() {
+  const s = clamp(W / 1250, 0.92, 1.7);
+  document.documentElement.style.setProperty('--ui', s.toFixed(3));
+}
+
+// ---------- 夜光藻 ----------
+function spawnPlankton(x, y, vx, vy, n = 2) {
+  for (let i = 0; i < n; i++) {
+    plankton.push({
+      x: x + rand(-5, 5), y: y + rand(-5, 5),
+      vx: vx * 0.1 + rand(-14, 14), vy: vy * 0.1 + rand(-14, 14),
+      life: 0, max: rand(0.55, 1.15), size: rand(0.7, 1.9) * SCALE,
+      hue: rand(168, 205),
+    });
+  }
+  if (plankton.length > 200) plankton.splice(0, plankton.length - 200);
+}
+
+// ---------- 鱼的存档（年龄/营养/名字都会保留） ----------
+const FISH_KEY = 'wanling.fish.v1';
+
+function saveFish() {
+  try {
+    localStorage.setItem(FISH_KEY, JSON.stringify(
+      fishes.filter((f) => !f.passer).slice(0, 30).map((f) => ({
+        sp: f.sp.id,
+        age: +f.ageDays.toFixed(2),
+        nut: f.nutrition,
+        life: f.lifespanStd,
+        lifeAct: +f.lifespanActual.toFixed(2),
+        persona: f.persona,
+        log: (f.chatLog || []).slice(-20),
+      })),
+    ));
+    // 未孵化的卵也要存档，别让玩家白花钱
+    localStorage.setItem(FISH_KEY + '.eggs', JSON.stringify(
+      eggs.filter((e) => !e.hatched).map((e) => ({ x: Math.round(e.x), sp: e.sp.id })),
+    ));
+  } catch { /* 存不下就算了 */ }
+}
+window.addEventListener('pagehide', saveFish);
+
+// ---------- 初始住民 ----------
+function spawnInitial() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(FISH_KEY) || 'null'); } catch { /* 忽略 */ }
+
+  if (Array.isArray(saved) && saved.length) {
+    for (const s of saved) {
+      const sp = SPECIES.find((x) => x.id === s.sp);
+      if (!sp) continue;
+      fishes.push(new Fish(sp, rand(W * 0.2, W * 0.8), rand(H * 0.2, H * 0.65), {
+        ageDays: s.age ?? 0,
+        nutrition: s.nut ?? 0,
+        lifespanStd: s.life,
+        lifespanActual: s.lifeAct,
+        persona: s.persona || null,
+        chatLog: Array.isArray(s.log) ? s.log : [],
+      }));
+    }
+  }
+
+  // 未孵化的卵也回到缸里
+  try {
+    const savedEggs = JSON.parse(localStorage.getItem(FISH_KEY + '.eggs') || 'null');
+    if (Array.isArray(savedEggs)) {
+      for (const e of savedEggs) {
+        const sp = SPECIES.find((s) => s.id === e.sp);
+        if (sp) eggs.push(new Egg(e.x ?? rand(W * 0.3, W * 0.7), sp));
+      }
+    }
+  } catch { /* 忽略 */ }
+
+  if (fishes.length) return;
+
+  // 新档：默认小群落，年龄营养随机错开，看起来有老有小
+  const lineup = [
+    ...Array(3).fill('zebra'),
+    'clown', 'tang', 'lantern',
+  ];
+  for (const id of lineup) {
+    const sp = SPECIES.find((s) => s.id === id);
+    const ageDays = rand(0, 2.4);
+    fishes.push(new Fish(sp, rand(W * 0.2, W * 0.8), rand(H * 0.2, H * 0.6), {
+      ageDays,
+      nutrition: Math.floor(rand(0, 45)),
+    }));
+  }
+}
+spawnInitial();
+
+collection.onchange = () => UI.updateHUD(collection.lumens, residentCount());
+
+// ---------- 交互 ----------
+let selected = null;
+
+function selectFish(fish) {
+  playSfx('select');
+  if (selected && selected !== fish) selected.hold = null;
+  selected = fish;
+  fish.hold = { x: fish.x, y: fish.y };
+  chat.openFor(fish, {
+    onSelectPersona: () => UI.updateHUD(collection.lumens, residentCount()),
+  });
+}
+
+function deselect() {
+  if (selected) selected.hold = null;
+  selected = null;
+}
+
+function feed(x, y) {
+  playSfx('feed');
+  const cy = Math.min(y, world.floorY - 20);
+  for (let i = 0; i < 3; i++) foods.push(new Food(x, cy));
+  ripples.push({ x, y: cy, r: 6, life: 0 });
+  spawnPlankton(x, cy, 0, 0, 2);
+  if (foods.length > 60) foods.splice(0, foods.length - 60);
+}
+
+function shockwave(x, y) {
+  playSfx('shock');
+  ripples.push({ x, y, r: 10, life: 0 });
+  ripples.push({ x, y, r: 10, life: -0.18 });
+  for (const f of fishes) {
+    const dx = f.x - x, dy = f.y - y;
+    const d = Math.hypot(dx, dy) || 1;
+    if (d < 330) {
+      const k = (1 - d / 330) * 430;
+      f.vx += (dx / d) * k;
+      f.vy += (dy / d) * k * 0.6;
+    }
+  }
+  spawnPlankton(x, y, 0, 0, 12);
+}
+
+function residentCount() {
+  return fishes.reduce((n, f) => n + (f.passer ? 0 : 1), 0);
+}
+
+// ---------- 路过鱼：穿缸而过的旅人 ----------
+let passerTimer = rand(20, 45);
+let firstPasserShown = false;
+
+function spawnPasser() {
+  const pools = {
+    clear: ['闲逛散心', '追一段洋流', '去邻居家做客', '觅食路过', '抄近路回家'],
+    rain: ['避雨迁徙', '找个避风的水域', '雨里赶路', '闲逛散心', '觅食路过'],
+    storm: ['避雨迁徙', '雨里赶路', '找个避风的水域'],
+  };
+  const pool = pools[weather.state] || pools.clear;
+  const purpose = pool[(Math.random() * pool.length) | 0];
+  // 大概率常见鱼，小概率罕见鱼，不会出现稀有以上
+  const rarity = Math.random() < 0.18 ? 1 : 0;
+  const pool2 = SPECIES.filter((s) => s.rarity === rarity);
+  const sp = pool2[(Math.random() * pool2.length) | 0];
+  const dir = Math.random() < 0.5 ? 1 : -1;
+  const f = new Fish(sp, dir > 0 ? -60 : W + 60, rand(H * 0.15, world.floorY - 90), {
+    passer: { dir, purpose },
+  });
+  // 化名与性格是本地白送的；只有聊天才消耗 AI token
+  if (AI.online) f.persona = makePasserPersona();
+  fishes.push(f);
+  if (!firstPasserShown && f.persona) {
+    firstPasserShown = true;
+    UI.toast(`🕊 一位名叫「${f.persona.name}」的旅人正穿缸而过——点它可以说说话`, true);
+  }
+}
+
+function buyEgg() {
+  if (eggs.length >= 2) return UI.toast('缸底已经有卵在等着了 — 找找闪圈的卵，点它孵化');
+  if (residentCount() >= MAX_FISH) return UI.toast('缸已经满啦，先和住民们多聊聊吧');
+  if (collection.lumens < EGG_COST) return UI.toast(`发光尘不够（还差 ${Math.ceil(EGG_COST - collection.lumens)}），多投喂几次吧`);
+  collection.addLumens(-EGG_COST);
+  playSfx('egg');
+  const sp = pickSpecies(true);
+  const egg = new Egg(rand(W * 0.25, W * 0.75), sp);
+  egg.onLanded = () => UI.toast('🥚 卵已沉底 — 点它孵化！', true);
+  eggs.push(egg);
+  UI.toast('一颗神秘卵正在缓缓下沉……');
+  UI.updateHUD(collection.lumens, residentCount());
+}
+
+async function hatch(egg) {
+  if (egg.hatched) return;
+  egg.hatched = true;
+  eggs.splice(eggs.indexOf(egg), 1);
+
+  const rc = RARITY_COLORS[egg.sp.rarity];
+  playSfx('hatch');
+  sparkles.burst(egg.x, egg.y, rgba('#ffffff', 0.9), 10, 80);
+  sparkles.burst(egg.x, egg.y, rgba(rc, 0.85), 22, 110);
+  ripples.push({ x: egg.x, y: egg.y, r: 8, life: 0 });
+
+  const fish = new Fish(egg.sp, egg.x, egg.y - 20, { z: 1.08 });
+  fishes.push(fish);
+  saveFish();
+  const firstTime = !collection.isDiscovered(egg.sp.id);
+  collection.discover(egg.sp.id);
+  UI.updateHUD(collection.lumens, residentCount());
+  UI.toast(
+    firstTime ? `🧬 新物种收录：${egg.sp.name} · ${RARITY_NAMES[egg.sp.rarity]}`
+              : `孵化出了一条${egg.sp.name}`,
+    egg.sp.rarity >= 2 || firstTime,
+  );
+
+  // AI 档案
+  if (AI.online) {
+    try {
+      await generatePersona(fish);
+      UI.toast(`📝 档案已登记：${fish.persona.name}`);
+      if (selected === fish) chat.openFor(fish);
+    } catch {
+      fallbackPersona(fish);
+    }
+  } else {
+    fallbackPersona(fish);
+  }
+}
+
+async function openBottle(b) {
+  if (!b || b.opened || b.bury >= 1) return;
+  b.opened = true;
+  bottles.splice(bottles.indexOf(b), 1);
+  sparkles.burst(b.x, b.y, rgba('#ffe9b0', 0.9), 16, 70);
+  ripples.push({ x: b.x, y: b.y, r: 6, life: 0 });
+
+  el('bottle-text').textContent = '……字条正在展开';
+  el('bottle-overlay').classList.remove('hidden');
+  const core = b.note ?? fetchNote();
+  const note = core.startsWith('「') ? core : `「${core}」`;
+  el('bottle-text').textContent = note;
+  // 收进背包，记录时间
+  collection.addToBackpack({ id: `bp${Date.now()}${Math.floor(Math.random() * 999)}`, type: 'bottle', note: core, time: Date.now() });
+  UI.toast('🧴 漂流瓶已收进背包');
+  // AI 在后台扩充句库（验收合格才入库）
+  maybeEnrich();
+}
+
+async function openStar(st) {
+  if (!st || st.opened || !st.alive) return;
+  st.opened = true;
+  stars.splice(stars.indexOf(st), 1);
+  sparkles.burst(st.x, st.y, rgba('#fff2c0', 0.9), 18, 80);
+  ripples.push({ x: st.x, y: st.y, r: 8, life: 0 });
+
+  const info = st.info || {};
+  el('star-info').innerHTML = '';
+  const nameLine = document.createElement('p');
+  nameLine.className = 'star-name';
+  nameLine.textContent = `「${info.name || '无名'}」`;
+  const metaLine = document.createElement('p');
+  metaLine.className = 'star-meta';
+  metaLine.textContent = `${info.species || ''} · ${info.stage || ''} · 享年 ${info.age ?? '?'} 天`;
+  el('star-info').append(nameLine, metaLine);
+  el('star-last').textContent = st.note || '……它的话还在星光里凝形';
+  el('star-overlay').classList.remove('hidden');
+
+  collection.addToBackpack({
+    id: `st${Date.now()}${Math.floor(Math.random() * 999)}`,
+    type: 'star',
+    note: st.note || '',
+    meta: info,
+    time: Date.now(),
+  });
+  UI.toast('⭐ 星辰已收进背包，它会替它记得');
+}
+
+// ---------- 指针 ----------
+let lastMove = null;
+let lastSpawn = 0;
+canvas.addEventListener('pointermove', (e) => {
+  const now = performance.now();
+  if (lastMove) {
+    const dtm = Math.max(8, now - lastMove.t) / 1000;
+    const vx = (e.clientX - lastMove.x) / dtm;
+    const vy = (e.clientY - lastMove.y) / dtm;
+    cursor.vx = cursor.vx * 0.65 + vx * 0.35;
+    cursor.vy = cursor.vy * 0.65 + vy * 0.35;
+    cursor.speed = Math.hypot(cursor.vx, cursor.vy);
+    // 快速划水唤醒夜光藻（节流：最多每 40ms 一粒，拖尾克制一点）
+    if (cursor.speed > 170 && now - lastSpawn > 40) {
+      lastSpawn = now;
+      spawnPlankton(e.clientX, e.clientY, cursor.vx, cursor.vy, 1);
+    }
+  }
+  lastMove = { x: e.clientX, y: e.clientY, t: now };
+  cursor.x = e.clientX;
+  cursor.y = e.clientY;
+  cursor.active = true;
+  whaleStone.hover = whaleStone.contains(cursor.x, cursor.y);
+});
+canvas.addEventListener('pointerleave', () => { cursor.active = false; });
+window.addEventListener('pointerup', () => { cursor.down = false; holdFeeding = false; });
+
+// ---------- 长按连续抛饵 ----------
+let holdFeeding = false;
+let holdTimer = 0;
+
+function hitTest(x, y) {
+  for (const d of dusts) {
+    if (Math.hypot(d.x - x, d.y - y) < 24) return { type: 'dust', obj: d };
+  }
+  if (whaleStone.contains(x, y)) return { type: 'stone' };
+  for (const st of stars) {
+    if (st.alive && Math.hypot(st.x - x, st.y - y) < 44) return { type: 'star', obj: st };
+  }
+  for (const b of bottles) {
+    if (b.bury < 1 && Math.hypot(b.x - x, b.y - y) < 40) return { type: 'bottle', obj: b };
+  }
+  for (const egg of eggs) {
+    if (Math.hypot(egg.x - x, egg.y - y) < 46) return { type: 'egg', obj: egg };
+  }
+  const sorted = [...fishes].sort((a, b) => b.z - a.z);
+  for (const f of sorted) {
+    if (Math.hypot(f.x - x, f.y - y) < 24 * f.sizeScale + 10) return { type: 'fish', obj: f };
+  }
+  return null;
+}
+
+canvas.addEventListener('pointerdown', (e) => {
+  cursor.down = true;
+  const x = e.clientX, y = e.clientY;
+  if (dragItem) return; // 拖着背包里的瓶子时不投饵
+  const hit = hitTest(x, y);
+  if (hit) return;      // 点到瓶子/卵/鱼：交给 click 处理
+  // 落在开阔水域：立即撒一次饵，并进入长按连撒模式
+  feed(x, y);
+  holdFeeding = true;
+  holdTimer = 0;
+  fedOnDown = true;
+});
+
+canvas.addEventListener('click', (e) => {
+  if (e.detail >= 2) return; // 双击交给敲缸
+  if (dragItem) return;
+  const x = e.clientX, y = e.clientY;
+  const hit = hitTest(x, y);
+  if (hit) {
+    if (hit.type === 'dust') return collectDust(hit.obj);
+    if (hit.type === 'stone') {
+      UI.togglePanel('panel-settings', true);
+      loadSettings();
+      return;
+    }
+    if (hit.type === 'star') return openStar(hit.obj);
+    if (hit.type === 'bottle') return openBottle(hit.obj);
+    if (hit.type === 'egg') return hatch(hit.obj);
+    if (hit.type === 'fish') return selectFish(hit.obj);
+  }
+  if (fedOnDown) { fedOnDown = false; return; } // 按下时已经撒过饵了
+  feed(x, y);
+});
+let fedOnDown = false;
+
+canvas.addEventListener('dblclick', (e) => {
+  const x = e.clientX, y = e.clientY;
+  // 点中鱼就不敲缸
+  for (const f of fishes) {
+    if (Math.hypot(f.x - x, f.y - y) < 24 * f.sizeScale + 10) return;
+  }
+  shockwave(x, y);
+});
+
+// ---------- 面板与按钮 ----------
+const chat = new ChatPanel();
+UI.initUI({
+  onPanelClose: (id) => {
+    if (id === 'panel-chat') deselect();
+  },
+});
+el('btn-collection').addEventListener('click', () => UI.togglePanel('panel-collection'));
+el('btn-backpack').addEventListener('click', () => { renderBackpack(); UI.togglePanel('panel-backpack'); });
+collection.onbackpack = () => { if (!el('panel-backpack').classList.contains('hidden')) renderBackpack(); };
+document.querySelectorAll('.bp-tab').forEach((b) => b.addEventListener('click', () => {
+  backpackView = b.dataset.view;
+  renderBackpack();
+}));
+el('btn-set-help').addEventListener('click', () => el('set-help').classList.toggle('hidden'));
+el('btn-empty-trash').addEventListener('click', () => {
+  collection.emptyTrash();
+  UI.toast('🧹 垃圾箱已清空');
+});
+el('btn-egg').addEventListener('click', buyEgg);
+el('btn-help').addEventListener('click', () => UI.togglePanel('help-overlay', true));
+el('btn-dive').addEventListener('click', () => {
+  el('splash').classList.add('hidden');
+  UI.showGameChrome();
+});
+
+// ---------- 回标题 / 存档 / 读档 / 重开一局 ----------
+function hideAllPanels() {
+  chat.close();
+  deselect();
+  UI.togglePanel('panel-collection', false);
+  UI.togglePanel('panel-backpack', false);
+  UI.togglePanel('help-overlay', false);
+  UI.togglePanel('bottle-overlay', false);
+  UI.togglePanel('panel-settings', false);
+}
+
+function resetRun() {
+  // 清空当前局的所有实体
+  deselect();
+  chat.close();
+  fishes.length = 0;
+  foods.length = 0;
+  eggs.length = 0;
+  dusts.length = 0;
+  ripples.length = 0;
+  plankton.length = 0;
+  bottles.length = 0;
+  stars.length = 0;
+  starQueue.length = 0;
+  bottleTimer = rand(130, 240);
+  // 删掉旧鱼/卵存档，让 spawnInitial 走"新档"分支
+  try {
+    localStorage.removeItem(FISH_KEY);
+    localStorage.removeItem(FISH_KEY + '.eggs');
+  } catch { /* 隐私模式无所谓 */ }
+  spawnInitial();
+  UI.updateHUD(collection.lumens, residentCount());
+  UI.toast('🧹 新的一局开始——缸里已经有了新的住民', true);
+}
+
+el('btn-exit').addEventListener('click', () => {
+  hideAllPanels();
+  UI.hideGameChrome();
+  el('splash').classList.remove('hidden');
+});
+
+// 设置面板开关
+el('btn-settings').addEventListener('click', () => {
+  syncAudioToggles();
+  syncShowNamesToggle();
+  UI.togglePanel('panel-settings-overlay', true);
+});
+
+el('btn-save').addEventListener('click', () => {
+  saveFish();
+  collection.save();
+  UI.toast('💾 已保存当前进度');
+});
+
+el('btn-load').addEventListener('click', () => {
+  if (!window.confirm('读取最后一次保存的进度？当前未保存的进度将被覆盖。')) return;
+  location.reload(); // 存档在 localStorage，刷新即重新加载
+});
+
+el('btn-reset').addEventListener('click', () => {
+  if (!window.confirm('重新开一局？将清空当前缸里的鱼群与未孵化的卵，但会保留图鉴收集进度与发光尘。')) return;
+  resetRun();
+});
+
+// ---------- 显示鱼名开关 ----------
+const namesCheck = el('show-names-check');
+function syncShowNamesToggle() {
+  namesCheck.checked = showFishNames;
+}
+function setShowNames(v) {
+  showFishNames = !!v;
+  try { localStorage.setItem(SHOW_NAMES_KEY, showFishNames ? '1' : '0'); } catch { /* 隐私模式无所谓 */ }
+  syncShowNamesToggle();
+}
+namesCheck.addEventListener('change', () => setShowNames(namesCheck.checked));
+syncShowNamesToggle(); // 初始同步
+
+// ---------- 音乐 / 音效开关 ----------
+const musicCheck = el('music-check');
+const sfxCheck = el('sfx-check');
+function syncAudioToggles() {
+  musicCheck.checked = prefs.music;
+  sfxCheck.checked = prefs.sfx;
+}
+musicCheck.addEventListener('change', () => setMusic(musicCheck.checked));
+sfxCheck.addEventListener('change', () => setSfx(sfxCheck.checked));
+syncAudioToggles();
+
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    deselect();
+    chat.close();
+    UI.togglePanel('panel-collection', false);
+    UI.togglePanel('panel-backpack', false);
+    UI.togglePanel('help-overlay', false);
+    UI.togglePanel('bottle-overlay', false);
+    UI.togglePanel('panel-settings-overlay', false);
+  }
+});
+
+// ---------- AI 状态 ----------
+AI.probe().then((online) => {
+  UI.setAIStatus(AI.online, AI.model, AI.hasKey);
+  if (!online) {
+    setTimeout(() => UI.toast('💡 鲸之石仍在沉睡——点右下角的它，用正确的密语唤醒海洋的智慧'), 2500);
+  }
+});
+
+// ---------- AI 设置面板 ----------
+async function loadSettings() {
+  try {
+    const cfg = await fetch('/api/config').then((r) => r.json());
+    el('set-key-state').textContent = cfg.hasKey ? `已保存（尾号 ${cfg.keyTail}）` : '未设置';
+    el('set-url').value = cfg.baseUrl;
+    el('set-model').value = cfg.model;
+    el('set-key').value = '';
+  } catch {
+    el('set-key-state').textContent = '读取失败';
+  }
+}
+
+el('set-save').addEventListener('click', async () => {
+  const body = {};
+  const k = el('set-key').value.trim();
+  if (k) body.apiKey = k;
+  const u = el('set-url').value.trim();
+  if (u) {
+    if (!/^https?:\/\/.+/.test(u)) return UI.toast('接口地址要以 http(s):// 开头哦');
+    body.baseUrl = u;
+  }
+  const m = el('set-model').value.trim();
+  if (m) body.model = m;
+  if (!Object.keys(body).length) return UI.toast('没有要保存的修改');
+  try {
+    const r = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || '保存失败');
+    UI.toast(d.hasKey ? '⚙️ AI 配置已保存并生效' : '已保存——但还没有 Key，鱼儿暂时不能说话', d.hasKey);
+    await AI.probe();
+    UI.setAIStatus(AI.online, AI.model, AI.hasKey);
+    await loadSettings();
+  } catch (err) {
+    UI.toast(`保存失败：${err.message}`);
+  }
+});
+
+el('set-clear').addEventListener('click', async () => {
+  try {
+    await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apiKey: '' }),
+    });
+    await AI.probe();
+    UI.setAIStatus(AI.online, AI.model, AI.hasKey);
+    await loadSettings();
+    UI.toast('已清除 Key');
+  } catch {
+    UI.toast('清除失败');
+  }
+});
+
+// ---------- 吃饭 ----------
+function mealtime() {
+  for (const f of fishes) {
+    if (f.dying || f.burrowing) continue; // 弥留的鱼不再进食
+    const eatR = 15 * f.sizeScale + 5;
+    for (const food of foods) {
+      if (food.eaten) continue;
+      if (Math.hypot(food.x - f.x, food.y - f.y) < eatR) {
+        food.eaten = true;
+        f.energy++;
+        collection.addFed();
+        // 营养点 +2，最多吃到本阶段上限（上限内才长身体）
+        const before = f.nutrition;
+        f.nutrition = Math.min(f.nutrition + 2, STAGE_NUT[f.stage]);
+        if (f.nutrition !== before && selected === f) chat.updateGrowth(f);
+        sparkles.burst(f.x, f.y, rgba('#ffd77a', 0.8), 6, 46);
+        break;
+      }
+    }
+  }
+  for (let i = foods.length - 1; i >= 0; i--) {
+    if (foods[i].gone) foods.splice(i, 1);
+  }
+}
+
+// ---------- 发光尘：成年且营养满格的鱼定时产出悬浮发光尘 ----------
+function updateDust(dt) {
+  for (const f of fishes) {
+    if (f.passer || f.dying || f.burrowing) { f.dustAboutTo = false; continue; }
+    // 只有成年（stage 2）且营养满格才产尘
+    const matureFull = f.stage >= 2 && f.nutrition >= STAGE_NUT[f.stage];
+    if (!matureFull) { f.dustAboutTo = false; continue; }
+    f.dustTimer -= dt;
+    // 即将产出：<1.5s 时发蓝光预告
+    f.dustAboutTo = f.dustTimer < 1.5;
+    if (f.dustTimer <= 0) {
+      f.dustTimer = rand(60, 120);          // 每 1~2 分钟产一批
+      const n = 1 + ((Math.random() * 4) | 0); // 1-4 颗
+      for (let i = 0; i < n; i++) dusts.push(new DustMote(f.x, f.y, 1));
+      sparkles.burst(f.x, f.y - 6, rgba('#6fe3ff', 0.9), 8, 60);
+    }
+  }
+  // 清理：被收集或到时的发光尘；鼠标靠近时光尘自动飞向 collection（吸收收集）
+  for (let i = dusts.length - 1; i >= 0; i--) {
+    dusts[i].update(dt, performance.now() / 1000, world);
+    const d = dusts[i];
+    // 鼠标靠近即自动收集：动效与点击收集一致（走同一 collectDust）
+    if (cursor.active && Math.hypot(d.x - cursor.x, d.y - cursor.y) < 46) {
+      collectDust(d);
+      if (d.gone) dusts.splice(i, 1);
+      continue;
+    }
+    if (d.gone) dusts.splice(i, 1);
+  }
+}
+
+// 点击收集一颗发光尘
+function collectDust(d) {
+  if (d.collected) return;
+  d.collected = true;
+  playSfx('collect');
+  collection.addLumens(d.n);
+  sparkles.burst(d.x, d.y, rgba('#6fe3ff', 0.9), 8, 70);
+  UI.updateHUD(collection.lumens, residentCount());
+}
+
+// ---------- 背包：漂流瓶收纳与放飞 ----------
+let dragItem = null;
+let ghostEl = null;
+
+let backpackView = 'main';
+
+function renderBackpack() {
+  const list = el('backpack-list');
+  const items = collection.backpack;
+  const trash = collection.trash;
+  const counts = { main: items.length, fav: items.filter((i) => i.fav).length, trash: trash.length };
+
+  document.querySelectorAll('.bp-tab').forEach((b) => {
+    b.classList.toggle('active', b.dataset.view === backpackView);
+    b.textContent = { main: `收集 ${counts.main}`, fav: `♡ ${counts.fav}`, trash: `🗑 ${counts.trash}` }[b.dataset.view];
+  });
+  el('btn-empty-trash').classList.toggle('hidden', backpackView !== 'trash' || trash.length === 0);
+  el('backpack-foot').textContent = {
+    main: '按住拖到海里放飞 · ✏️ 改写话语 · ♡ 收藏进收藏夹',
+    fav: '收藏夹里存着你的收集 · 不会因为你手滑而消失',
+    trash: '♻ 可恢复 · 「永久删除」不可找回',
+  }[backpackView];
+  el('backpack-count').textContent = {
+    main: items.length ? `共 ${counts.main} 件收集` : '空空如也，去海里捡瓶子吧',
+    fav: counts.fav ? `收藏了 ${counts.fav} 件最珍贵的` : '收藏夹还是空的 — 点字条旁的 ♡',
+    trash: trash.length ? '这里的东西随时可以恢复' : '垃圾箱是空的',
+  }[backpackView];
+
+  const buildRow = (item, trashed) => {
+    const isStar = item.type === 'star';
+    const row = document.createElement('div');
+    row.className = 'bp-item' + (isStar ? ' bp-star' : '') + (trashed ? ' trashed' : '');
+
+    const ico = document.createElement('span');
+    ico.className = 'bp-ico';
+    ico.textContent = isStar ? '⭐' : '🧴';
+
+    const text = document.createElement('div');
+    text.className = 'bp-text';
+    const note = document.createElement('p');
+    note.className = 'bp-note';
+    if (isStar) {
+      note.textContent = item.note || '……';
+    } else {
+      note.textContent = item.note.startsWith('「') ? item.note : `「${item.note}」`;
+    }
+    const time = document.createElement('p');
+    time.className = 'bp-time';
+    const d = new Date(item.time);
+    const timeStr = `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    time.textContent = isStar
+      ? `${item.meta?.name || '无名'} · ${item.meta?.species || ''} · ${timeStr} 收入`
+      : `${timeStr} 捞起`;
+    text.append(note, time);
+
+    row.append(ico, text);
+
+    if (!trashed) {
+      // 收藏
+      const fav = document.createElement('button');
+      fav.className = 'bp-act bp-fav' + (item.fav ? ' on' : '');
+      fav.title = item.fav ? '取消收藏' : '收藏进收藏夹';
+      fav.textContent = item.fav ? '♥' : '♡';
+      fav.addEventListener('pointerdown', (e) => e.stopPropagation());
+      fav.addEventListener('click', (e) => { e.stopPropagation(); collection.toggleFav(item.id); });
+      // 改写话语
+      const edit = document.createElement('button');
+      edit.className = 'bp-act bp-edit';
+      edit.title = '修改话语';
+      edit.textContent = '✏️';
+      edit.addEventListener('pointerdown', (e) => e.stopPropagation());
+      edit.addEventListener('click', (e) => { e.stopPropagation(); startNoteEdit(row, item); });
+      // 丢进垃圾箱
+      const del = document.createElement('button');
+      del.className = 'bp-act bp-del';
+      del.title = '丢进垃圾箱';
+      del.textContent = '🗑';
+      del.addEventListener('pointerdown', (e) => e.stopPropagation());
+      del.addEventListener('click', (e) => { e.stopPropagation(); collection.toTrash(item.id); UI.toast('已移入垃圾箱'); });
+      row.append(fav, edit, del);
+
+      const hint = document.createElement('span');
+      hint.className = 'bp-hint';
+      hint.textContent = '按住拖到海里';
+      row.append(hint);
+      row.addEventListener('pointerdown', (e) => startBottleDrag(e, item));
+    } else {
+      const restore = document.createElement('button');
+      restore.className = 'bp-act bp-restore';
+      restore.textContent = '♻ 恢复';
+      restore.addEventListener('pointerdown', (e) => e.stopPropagation());
+      restore.addEventListener('click', (e) => { e.stopPropagation(); collection.restoreFromTrash(item.id); UI.toast('已放回背包'); });
+      const purge = document.createElement('button');
+      purge.className = 'bp-act bp-del';
+      purge.textContent = '永久删除';
+      purge.addEventListener('pointerdown', (e) => e.stopPropagation());
+      purge.addEventListener('click', (e) => { e.stopPropagation(); collection.purgeFromTrash(item.id); });
+      row.append(restore, purge);
+    }
+    return row;
+  };
+
+  const rows = [];
+  if (backpackView === 'trash') {
+    for (const item of trash) rows.push(buildRow(item, true));
+    if (!rows.length) rows.push(bpEmpty('垃圾箱是空的'));
+  } else {
+    const src = backpackView === 'fav' ? items.filter((i) => i.fav) : items;
+    for (const item of src) rows.push(buildRow(item, false));
+    if (!rows.length) {
+      rows.push(bpEmpty(backpackView === 'fav' ? '收藏夹还是空的 — 点字条旁的 ♡' : '空空如也，去海里捡瓶子吧'));
+    }
+  }
+  list.replaceChildren(...rows);
+}
+
+function bpEmpty(text) {
+  const p = document.createElement('p');
+  p.className = 'bp-empty';
+  p.textContent = text;
+  return p;
+}
+
+// 玩家改写背包里的话语
+function startNoteEdit(row, item) {
+  const noteP = row.querySelector('.bp-note');
+  if (!noteP || row.querySelector('.bp-note-input')) return;
+  const input = document.createElement('input');
+  input.className = 'bp-note-input';
+  input.maxLength = 60;
+  input.value = item.note;
+  input.addEventListener('pointerdown', (e) => e.stopPropagation());
+  noteP.replaceWith(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const commit = () => {
+    if (done) return;
+    done = true;
+    const v = input.value.trim().slice(0, 60);
+    if (v && v !== item.note) {
+      item.note = v;
+      collection.save();
+      UI.toast('✍️ 话语已改写');
+    }
+    renderBackpack();
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    if (e.key === 'Escape') { done = true; renderBackpack(); }
+  });
+  input.addEventListener('blur', commit);
+}
+
+function startBottleDrag(e, item) {
+  e.preventDefault();
+  dragItem = { ...item };
+  ghostEl = document.createElement('div');
+  ghostEl.className = 'bp-ghost';
+  ghostEl.textContent = '🧴';
+  document.body.appendChild(ghostEl);
+  moveGhost(e.clientX, e.clientY);
+  window.addEventListener('pointermove', moveGhost);
+  window.addEventListener('pointerup', endBottleDrag, { once: true });
+}
+
+function moveGhost(e) {
+  if (!ghostEl) return;
+  ghostEl.style.left = `${e.clientX}px`;
+  ghostEl.style.top = `${e.clientY}px`;
+}
+
+function endBottleDrag(e) {
+  window.removeEventListener('pointermove', moveGhost);
+  const item = dragItem;
+  dragItem = null;
+  if (ghostEl) { ghostEl.remove(); ghostEl = null; }
+  if (!item) return;
+  // 只有松手在海面上才算放飞
+  const target = document.elementFromPoint(e.clientX, e.clientY);
+  if (target === canvas) {
+    throwFromBackpack(item, e.clientX, e.clientY);
+  } else {
+    UI.toast('要拖到海里再松手哦');
+  }
+}
+
+function throwFromBackpack(item, x, y) {
+  collection.removeFromBackpack(item.id);
+  if (item.type === 'star') {
+    const st = new Star(clamp(x, 30, W - 30), item.meta || { name: '无名' }, item.note || null);
+    st.y = clamp(y, 24, world.floorY - 20);
+    st.vy = 26;
+    st.onLanded = () => UI.toast('⭐ 星星静静躺在沙床上，照亮一小片海');
+    stars.push(st);
+    ripples.push({ x: st.x, y: st.y, r: 6, life: 0 });
+    UI.toast('⭐ 星辰重新回到了海里');
+    return;
+  }
+  const b = new Bottle(clamp(x, 30, W - 30), item.note);
+  b.y = clamp(y, 24, world.floorY - 24);
+  b.vy = 30;
+  b.onLanded = () => UI.toast('瓶子轻轻落在了沙床上…');
+  bottles.push(b);
+  ripples.push({ x: b.x, y: b.y, r: 6, life: 0 });
+  UI.toast('🧴 漂流瓶重新回到了海里');
+}
+
+// ---------- 环境状态 chip ----------
+let lastEnvUpd = 0;
+function updateEnvChip(t) {
+  if (t - lastEnvUpd < 1) return;
+  lastEnvUpd = t;
+  const p = weather.phase(t);
+  let ico = '☀️', label;
+  if (p < 0.06) { ico = '🌅'; label = '黎明'; }
+  else if (p < 0.42) { ico = '☀️'; label = '白天'; }
+  else if (p < 0.56) { ico = '🌇'; label = '黄昏'; }
+  else if (p < 0.94) { ico = '🌙'; label = '夜晚'; }
+  else { ico = '🌅'; label = '黎明'; }
+  if (weather.state === 'rain') { label += ' · 🌧️ 小雨'; }
+  else if (weather.state === 'storm') { label += ' · ⛈️ 暴风雨'; }
+  if (weather.fire > 0.3) { label += ' · 🔥 火烧云'; }
+  el('env-ico').textContent = ico;
+  el('env-label').textContent = label;
+}
+
+// ---------- 调试/测试钩子 ----------
+window.__tank = {
+  fishes, eggs, foods, dusts, collection, weather, bottles, stars, starQueue,
+  get bottleTimer() { return bottleTimer; },
+  set bottleTimer(v) { bottleTimer = v; },
+  get passerTimer() { return passerTimer; },
+  set passerTimer(v) { passerTimer = v; },
+  feed, buyEgg, hatch, selectFish, shockwave, saveFish, collectDust,
+  spawnDust: (x, y, n) => { const d = new DustMote(x ?? W * 0.5, y ?? H * 0.5, n ?? 2); dusts.push(d); return d; },
+  spawnFish: (id) => { const sp = SPECIES.find((s) => s.id === id) || SPECIES[0]; const f = new Fish(sp, W * 0.35, H * 0.35); fishes.push(f); return f; },
+  spawnBottle: (x, note) => { const b = new Bottle(x ?? rand(W * 0.3, W * 0.7), note ?? null); bottles.push(b); return b; },
+  throwFromBackpack,
+};
+
+// ---------- 主循环 ----------
+let last = performance.now();
+let saveTimer = 0;
+function tick(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  const t = now / 1000;
+  // 尺寸哨兵：任何来源的窗口变化都能触发重排
+  if (window.innerWidth !== W || window.innerHeight !== H) resize();
+  const env = weather.env(t);
+
+  weather.update(dt, t);
+  world.update(dt, t);
+  world.stir(fishes, cursor, dt);
+  for (const j of jellies) j.update(dt, t, W, H);
+  for (const f of fishes) {
+    f.update(dt, t, world, fishes, foods, cursor, env);
+    if (f.justGrew) {
+      f.justGrew = false;
+      UI.toast(`🐟 「${f.persona?.name || f.sp.name}」长成了${STAGE_NAMES[f.stage]}！`, true);
+      if (selected === f) chat.updateGrowth(f);
+    }
+  }
+  // 路过鱼游出屏幕，就此道别
+  for (let i = fishes.length - 1; i >= 0; i--) {
+    const f = fishes[i];
+    if (f.passer && !f.hold && (f.x < -130 || f.x > W + 130)) {
+      fishes.splice(i, 1);
+      if (selected === f) { deselect(); chat.close(); }
+    }
+  }
+  // 弥留播报 + 钻沙扬沙 + 钻沙完成
+  for (let i = fishes.length - 1; i >= 0; i--) {
+    const f = fishes[i];
+    if (f.justDying) {
+      f.justDying = false;
+      UI.toast(`🕯 「${f.persona?.name || f.sp.name}」的大限快到了……`, true);
+      if (selected === f) chat.updateGrowth(f);
+    }
+    if (f.burrowing) {
+      f._sandT = (f._sandT || 0) + dt;
+      if (f._sandT > 0.22) {
+        f._sandT = 0;
+        sparkles.burst(f.x + rand(-16, 16), world.floorY - 8, rgba('#c9b28a', 0.75), 4, 46, false);
+      }
+      if (f.burrowT >= 10) {
+        const info = { name: f.persona?.name || f.sp.name, species: f.sp.name, stage: STAGE_NAMES[f.stage], age: +f.ageDays.toFixed(1) };
+        const noteP = generateLastWords(f);
+        const idx = fishes.indexOf(f);
+        if (idx >= 0) fishes.splice(idx, 1);
+        if (selected === f) { deselect(); chat.close(); }
+        starQueue.push({ x: f.burrowX, timer: 60, info, noteP });
+        sparkles.burst(f.burrowX, world.floorY - 10, rgba('#c9b28a', 0.9), 16, 70, false);
+        UI.toast(`🌊 「${info.name}」已长眠于沙床之下`, true);
+      }
+    }
+  }
+  for (const food of foods) food.update(dt, t, world);
+  for (const egg of eggs) egg.update(dt, t, world);
+  for (const b of bottles) b.update(dt, t, world);
+  for (const st of stars) st.update(dt, t, world);
+  // 完全没入沙中的瓶子从海里消失
+  for (let i = bottles.length - 1; i >= 0; i--) {
+    if (bottles[i].bury >= 1) bottles.splice(i, 1);
+  }
+  sparkles.update(dt);
+  mealtime();
+  updateDust(dt);
+
+  // 长按连撒鱼饵（每 0.5 秒一撮）
+  if (holdFeeding && cursor.down && !dragItem) {
+    holdTimer += dt;
+    if (holdTimer >= 0.5) {
+      holdTimer -= 0.5;
+      feed(cursor.x, cursor.y);
+    }
+  }
+
+  // 漂流瓶吸引鱼群围观：路过鱼与弥留的鱼都毫无兴趣
+  for (const f of fishes) if (!f.passer) f._bottleCur = null;
+  for (const b of bottles) {
+    if (b.bury >= 1) continue;
+    const falling = !b.landed;
+    const bx = b.x;
+    const by = b.y - (falling ? 34 : 52); // 兜圈中心：瓶子上方
+    const fade = 1 - b.bury; // 下坠时 bury=0 吸引力满格；陷沙越深越没鱼搭理
+    if (fade < 0.15) continue; // 陷得太深，鱼已经完全不感兴趣
+    for (const f of fishes) {
+      if (f.passer || f.dying) continue; // 旅人对瓶子不感兴趣；弥留的鱼不被打扰
+      const dx = bx - f.x, dy = by - f.y;
+      const d = Math.hypot(dx, dy);
+      if (d >= 620 || d <= 1) continue;
+      if (fade > 0.15) f._bottleCur = fade; // 陷沙越深，鱼对瓶子的兴趣越低（回游习性逐渐恢复）
+      const dir = f.seed % 2 < 1 ? 1 : -1;
+      if (d > 140) {
+        // 远处：被瓶子吸引（带保底拉力），拉力随陷沙深度衰减
+        const pull = ((falling ? 170 : 120) + (1 - Math.min(d, 620) / 620) * 180) * fade;
+        f.vx += (dx / d) * pull * dt;
+        f.vy += (dy / d) * pull * dt;
+      } else {
+        // 近处：绕着瓶子巡游，半径稳定（下坠时圈子稍大，别碰到瓶身）
+        const tx = -dy / d, ty = dx / d;
+        const radial = (d - (falling ? 92 : 80)) * 1.6; // 太近往外推，太远往里拉
+        f.vx += (tx * 130 * dir * fade + (dx / d) * radial) * dt;
+        f.vy += (ty * 130 * dir * 0.45 * fade + (dy / d) * radial * 0.45) * dt;
+      }
+    }
+  }
+
+  // 星辰：对鱼的吸引力比漂流瓶更大，路过鱼也偶尔驻足
+  for (const st of stars) {
+    if (!st.alive) continue;
+    const falling = !st.landed;
+    const bx = st.x;
+    const by = st.y - (falling ? 40 : 46);
+    for (const f of fishes) {
+      if (f.dying || f.burrowing) continue;
+      const dx = bx - f.x, dy = by - f.y;
+      const d = Math.hypot(dx, dy);
+      if (d >= 700 || d <= 1) continue;
+      f._bottleCur = 1;
+      const dir = f.seed % 2 < 1 ? 1 : -1;
+      const passerK = f.passer ? 0.4 : 1; // 旅人鱼只是稍作停留
+      if (d > 150) {
+        const pull = (1 - d / 700) * 340 * passerK;
+        f.vx += (dx / d) * pull * dt;
+        f.vy += (dy / d) * pull * dt;
+      } else {
+        const tx = -dy / d, ty = dx / d;
+        const radial = (d - 88) * 1.5;
+        f.vx += (tx * 140 * dir * passerK + (dx / d) * radial) * dt;
+        f.vy += (ty * 140 * dir * 0.45 * passerK + (dy / d) * radial * 0.45) * dt;
+      }
+    }
+  }
+
+  // 夜光藻漂移
+  for (let i = plankton.length - 1; i >= 0; i--) {
+    const p = plankton[i];
+    p.life += dt;
+    p.x += p.vx * dt + Math.sin(t * 1.5 + p.hue) * 4 * dt;
+    p.y += p.vy * dt;
+    p.vx *= 0.965; p.vy *= 0.965;
+    p.vy -= 3 * dt; // 微微上浮
+    if (p.life > p.max) plankton.splice(i, 1);
+  }
+
+  // 漂流瓶事件：海里没有瓶子且背包不缺时，偶尔自然沉一只下来
+  if (bottles.length === 0) {
+    bottleTimer -= dt;
+    if (bottleTimer <= 0) {
+      const b = new Bottle(rand(W * 0.18, W * 0.82), null);
+      b.onLanded = () => UI.toast('🧴 一只漂流瓶沉到了沙床上…', true);
+      bottles.push(b);
+      bottleTimer = rand(130, 240);
+    }
+  }
+
+  // 星辰降临：长眠一分钟后，一颗星星带着遗言落进缸里
+  for (let i = starQueue.length - 1; i >= 0; i--) {
+    const q = starQueue[i];
+    q.timer -= dt;
+    if (q.timer <= 0) {
+      const st = new Star(q.x, q.info, null);
+      if (q.noteP) q.noteP.then((n) => { st.note = n; }).catch(() => {});
+      stars.push(st);
+      starQueue.splice(i, 1);
+      UI.toast('⭐ 一颗星星落进了缸里……', true);
+    }
+  }
+  for (let i = stars.length - 1; i >= 0; i--) {
+    if (!stars[i].alive) stars.splice(i, 1); // 三天后星光熄灭
+  }
+
+  // 鱼的存档：每 8 秒存一次（路过鱼不入册）
+  saveTimer += dt;
+  if (saveTimer > 8) { saveTimer = 0; saveFish(); }
+
+  // 路过鱼：平时少见，下雨变多，暴雨更多
+  passerTimer -= dt;
+  if (passerTimer <= 0) {
+    passerTimer = weather.state === 'storm' ? rand(14, 30) : weather.state === 'rain' ? rand(26, 55) : rand(55, 110);
+    const passerCount = fishes.reduce((n, f) => n + (f.passer ? 1 : 0), 0);
+    if (passerCount < 3) spawnPasser();
+  }
+
+  // 涟漪
+  for (let i = ripples.length - 1; i >= 0; i--) {
+    const r = ripples[i];
+    r.life += dt;
+    if (r.life > 0) r.r += 60 * dt;
+    if (r.life > 0.9) ripples.splice(i, 1);
+  }
+
+  // ---- 绘制 ----
+  world.drawBack(ctx, t, env);
+  for (const j of jellies) j.draw(ctx, t);
+  for (const f of [...fishes].sort((a, b) => a.z - b.z)) f.draw(ctx, t, env);
+  for (const food of foods) food.draw(ctx);
+  for (const d of dusts) d.draw(ctx, t);
+  for (const egg of eggs) egg.draw(ctx, t);
+  for (const b of bottles) b.draw(ctx, t, env);
+  for (const st of stars) st.draw(ctx, t);
+  whaleStone.draw(ctx, t);
+  sparkles.draw(ctx);
+  world.drawMid(ctx, t, env);
+
+  // 夜光藻（夜里的重头戏）
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (const p of plankton) {
+    const a = Math.sin(Math.PI * clamp(p.life / p.max, 0, 1));
+    const bright = 0.18 + env.night * 0.82;
+    ctx.fillStyle = `hsla(${p.hue}, 95%, 72%, ${(a * bright).toFixed(3)})`;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * (0.6 + a * 0.6), 0, TAU);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  world.drawFront(ctx, t);
+  weather.drawSurfaceFX(ctx);
+  weather.drawVeil(ctx);
+
+  // 点击涟漪
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (const r of ripples) {
+    if (r.life < 0) continue;
+    const a = 0.5 * (1 - r.life / 0.9);
+    ctx.strokeStyle = `rgba(160,230,255,${a})`;
+    ctx.lineWidth = r.r < 40 ? 1.6 : 1.2;
+    ctx.beginPath();
+    ctx.arc(r.x, r.y, r.r, 0, TAU);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // 选中态：光环 + 名牌
+  if (selected) {
+    const L = selected.length;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.strokeStyle = `rgba(160,240,255,${0.4 + 0.2 * Math.sin(t * 4)})`;
+    ctx.lineWidth = 1.4;
+    ctx.setLineDash([5, 6]);
+    ctx.beginPath();
+    ctx.arc(selected.x, selected.y, L * 1.1 + 8, 0, TAU);
+    ctx.stroke();
+    ctx.restore();
+
+    const name = selected.persona ? selected.persona.name : '未登记';
+    ctx.font = '14px "Microsoft YaHei", sans-serif';
+    const tw = ctx.measureText(name).width;
+    const bx = selected.x - tw / 2 - 12;
+    const by = selected.y - L - 34;
+    ctx.fillStyle = 'rgba(4,16,30,0.8)';
+    ctx.strokeStyle = 'rgba(111,227,255,0.35)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(bx, by, tw + 24, 26, 13);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#d8ecf5';
+    ctx.fillText(name, bx + 12, by + 18);
+  }
+
+  // 路过鱼头顶的小名牌：一眼认出这是旅人（半透明旅人风）
+  for (const f of fishes) {
+    if (!f.passer || !f.persona || selected === f) continue;
+    ctx.font = '12px "Microsoft YaHei", sans-serif';
+    const tw = ctx.measureText(f.persona.name).width;
+    const bx = f.x - tw / 2 - 10;
+    const by = f.y - f.length - 26;
+    ctx.fillStyle = 'rgba(4,16,30,0.5)';
+    ctx.beginPath();
+    ctx.roundRect(bx, by, tw + 20, 20, 10);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(216,236,245,0.72)';
+    ctx.fillText(f.persona.name, bx + 10, by + 14);
+  }
+
+  // 自家鱼常显名牌：开启「显示鱼名」时，展示所有非选中自家鱼的名字（与旅人样式区分）
+  if (showFishNames) {
+    for (const f of fishes) {
+      if (f.passer || !f.persona || selected === f) continue;
+      const name = f.persona.name;
+      const rc = RARITY_COLORS[f.sp.rarity] || RARITY_COLORS[0];
+      ctx.font = '13px "Microsoft YaHei", sans-serif';
+      const tw = ctx.measureText(name).width;
+      const bx = f.x - tw / 2 - 11;
+      const by = f.y - f.length - 28;
+      // 自家鱼名牌：按物种稀有度着色（描边 + 微光），文字保持高亮
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.fillStyle = rgba(rc, 0.10 + 0.05 * Math.sin(t * 2 + f.seed));
+      ctx.beginPath();
+      ctx.roundRect(bx, by, tw + 22, 24, 12);
+      ctx.fill();
+      ctx.restore();
+      ctx.fillStyle = 'rgba(8,28,46,0.82)';
+      ctx.strokeStyle = rgba(rc, 0.85);
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.roundRect(bx, by, tw + 22, 24, 12);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#d8ecf5';
+      ctx.fillText(name, bx + 11, by + 16.5);
+    }
+  }
+
+  UI.updateHUD(collection.lumens, residentCount());
+  UI.setEggReady(
+    collection.lumens >= EGG_COST && eggs.length < 2 && residentCount() < MAX_FISH,
+    eggs.length,
+  );
+  updateEnvChip(t);
+}
+function loop(now) {
+  lastRaf = now;
+  tick(now);
+  requestAnimationFrame(loop);
+}
+// 看门狗：rAF 被浏览器节流（如标签页在后台）时，用定时器补帧，保证鱼继续成长
+let lastRaf = performance.now();
+setInterval(() => {
+  if (performance.now() - lastRaf > 250) tick(performance.now());
+}, 100);
+resize();
+requestAnimationFrame(loop);

@@ -1,0 +1,10 @@
+{
+  "name": "wanling-tank",
+  "version": "1.0.0",
+  "description": "万灵缸 — DeepSeek 驱动的深海互动水族馆",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "license": "MIT"
+}

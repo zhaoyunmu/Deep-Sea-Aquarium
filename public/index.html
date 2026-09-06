@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>万灵缸 · 深海互动水族馆</title>
+<script>
+  window.__errEarly = [];
+  window.addEventListener('error', function (e) {
+    window.__errEarly.push((e.message || 'unknown') + ' @ ' + (e.filename || '') + ':' + (e.lineno || '?'));
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    window.__errEarly.push('promise: ' + ((e.reason && e.reason.message) || e.reason));
+  });
+</script>
+<link rel="stylesheet" href="css/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐟</text></svg>">
+</head>
+<body>
+  <canvas id="tank"></canvas>
+
+  <!-- 顶部 HUD -->
+  <div id="hud" class="hidden">
+    <div class="hud-left">
+      <div class="stat lumens" title="发光尘：鱼儿进食后产出，用来孵化神秘卵">
+        <span class="gem"></span><span id="lumens-count">0</span><span class="unit">发光尘</span>
+      </div>
+      <div class="stat fish" title="缸里的生物数量">
+        <span class="dot"></span><span id="fish-count">0</span><span class="unit">位住民</span>
+      </div>
+    </div>
+    <div class="hud-right">
+      <div id="env-status" class="ai-status" title="缸里的时辰与天气"><span id="env-ico">☀️</span><span id="env-label">白天 · 晴</span></div>
+      <button id="btn-backpack" class="hud-btn" title="漂流瓶背包">🎒 背包</button>
+      <button id="btn-collection" class="hud-btn" title="万灵图鉴">📖 图鉴</button>
+      <button id="btn-egg" class="hud-btn" title="消耗发光尘孵化一枚神秘卵">🥚 神秘卵 <em id="egg-cost">30</em></button>
+      <button id="btn-help" class="hud-btn" title="玩法说明">?</button>
+    </div>
+  </div>
+
+  <!-- 底部提示 -->
+  <div id="hint" class="hidden">点击水面 投喂饲料 · 点击小鱼 和它聊天 · 偶尔有神秘卵沉下来</div>
+
+  <!-- 右下角：回标题 / 存档 / 读档 / 重开一局 -->
+  <div id="exit-bar" class="exit-bar hidden">
+    <button id="btn-settings" class="exit-btn" title="设置（音乐 / 音效 / 显示鱼名）">⚙️ 设置</button>
+    <button id="btn-exit" class="exit-btn warn" title="回到标题界面">🏠 回标题</button>
+    <button id="btn-save" class="exit-btn" title="手动保存当前进度">💾 存档</button>
+    <button id="btn-load" class="exit-btn" title="读取最后一次保存的进度">📖 读档</button>
+    <button id="btn-reset" class="exit-btn danger" title="重新开一局（保留图鉴进度）">🧹 重开一局</button>
+  </div>
+
+  <!-- 背包面板 -->
+  <aside id="panel-backpack" class="panel left hidden">
+    <header>
+      <h2>🎒 背包</h2>
+      <p id="backpack-count">空空如也，去海里捡瓶子吧</p>
+      <button class="close-btn" data-close="panel-backpack">✕</button>
+    </header>
+    <div class="bp-tabs">
+      <button class="bp-tab active" data-view="main">收集</button>
+      <button class="bp-tab" data-view="fav">♡ 收藏夹</button>
+      <button class="bp-tab" data-view="trash">🗑 垃圾箱</button>
+    </div>
+    <div id="backpack-list" class="backpack-list"></div>
+    <button id="btn-empty-trash" class="bp-empty-trash hidden">🧹 清空垃圾箱</button>
+    <footer class="panel-foot" id="backpack-foot">按住瓶子拖到海里放飞 · 沉底的瓶子一天后会没入沙中</footer>
+  </aside>
+
+  <!-- 图鉴面板 -->
+  <aside id="panel-collection" class="panel left hidden">
+    <header>
+      <h2>万灵图鉴</h2>
+      <p id="collection-progress">已收录 0 / 0</p>
+      <button class="close-btn" data-close="panel-collection">✕</button>
+    </header>
+    <div id="collection-grid" class="collection-grid"></div>
+    <footer class="panel-foot">每孵化一枚神秘卵，都可能解锁新的物种档案</footer>
+  </aside>
+
+  <!-- 聊天面板 -->
+  <aside id="panel-chat" class="panel right hidden">
+    <header>
+      <div class="chat-head">
+        <canvas id="chat-avatar" width="96" height="96"></canvas>
+        <div class="chat-title">
+          <div class="name-row">
+            <h2 id="chat-name">…</h2>
+            <button id="btn-rename" class="rename-btn" title="给它起个名字">✏️</button>
+          </div>
+          <p id="chat-species">…</p>
+          <div class="chat-grow">
+            <span id="chat-stage" class="stage-tag">幼年</span>
+            <div class="grow-bar" title="营养点：喂饲料会涨，吃满本阶段上限后，年龄一到就长大"><i id="grow-fill"></i></div>
+            <span id="chat-grow-num">0/20</span>
+            <span id="chat-age">0.0 天</span>
+          </div>
+        </div>
+      </div>
+      <button class="close-btn" data-close="panel-chat">✕</button>
+    </header>
+      <div id="chat-profile" class="chat-profile"></div>
+      <div id="chat-log" class="chat-log"></div>
+      <div id="chat-quick" class="chat-quick"></div>
+    <form id="chat-form" class="chat-form">
+      <input id="chat-input" type="text" maxlength="120" placeholder="和它说点什么…" autocomplete="off">
+      <button type="submit" id="chat-send">➤</button>
+    </form>
+    <button id="btn-persona" class="persona-btn hidden" title="让 AI 为它生成/重写一份档案">✨ 生成档案</button>
+    <p id="chat-offline-note" class="chat-offline-note hidden">它似乎不会说话，除非获得深海（deep sea）的智慧……</p>
+  </aside>
+
+  <!-- toast -->
+  <div id="toasts"></div>
+
+  <!-- 帮助 -->
+  <div id="help-overlay" class="overlay hidden">
+    <div class="overlay-card">
+      <h2>🐟 万灵缸 · 生存指南</h2>
+      <ul>
+        <li><b>投喂</b> — 在水里任意位置点一下，饲料会缓缓下沉，鱼群会涌过来抢食。鱼吃完会产出<b>发光尘</b>。</li>
+        <li><b>神秘卵</b> — 攒够发光尘后点右上角「神秘卵」，会有一颗卵沉到沙床上，<b>点它</b>孵化（沉底后会闪圈圈提示你）。</li>
+        <li><b>聊天</b> — 点击任何一条鱼，它会游过来跟你说话。每条鱼都有 AI 生成的名字与性格。</li>
+        <li><b>搅水</b> — 按住鼠标快速划过会掀起水流，鱼和海草都会被带动；快速划动还会唤醒沉睡的<b>夜光藻</b>。</li>
+        <li><b>敲缸</b> — 双击水面会产生一圈冲击波，把鱼吓得四散。</li>
+        <li><b>漂流瓶</b> — 偶尔会有瓶子摇摇晃晃沉下来，点开读一句深海拾句。</li>
+        <li><b>路过的鱼</b> — 偶尔有旅人鱼穿缸而过（下雨天更多，它们是来避雨的）。点它聊两句——聊完它可还要继续赶路。</li>
+        <li><b>图鉴</b> — 右上角「图鉴」查看你收录了多少种深海住民。</li>
+        <li><b>看天吃饭</b> — 缸里有昼夜更替和小雨、暴风雨。入夜后生物光会更亮；暴雨天鱼会躲到深处，偶尔还有闪电劈下来。</li>
+      </ul>
+      <button class="primary" data-close="help-overlay">明白了，潜水去</button>
+    </div>
+  </div>
+
+
+  <!-- AI 设置面板（鲸之石） -->
+  <aside id="panel-settings" class="panel right hidden">
+    <header>
+      <h2>🐋 鲸之石</h2>
+      <p>密语一旦刻入，立即生效</p>
+      <button class="close-btn" data-close="panel-settings">✕</button>
+    </header>
+    <div class="stone-lore">
+      <p class="lore-poem">传说有一条巨鲸，<br>把深海（ deep sea ）的智慧刻进了这块石头。<br>若以独特的<b>密语</b>呼唤它——石纹亮起之时，<br>这片海洋便有了会说话的灵魂。</p>
+      <button id="btn-set-help" class="set-help-toggle">？ 我该怎么获得密语</button>
+      <ol id="set-help" class="set-help hidden">
+        <li>打开 <b>platform.deepseek.com</b>，注册 / 登录（新账号会送一笔免费额度）。</li>
+        <li>左侧菜单选「<b>API keys</b>」→ 点「<b>创建 API key</b>」，复制那串 <b>sk-</b> 开头的密钥（只显示一次，记得保存好）。</li>
+        <li>回到这里，把密钥粘贴进下方「API Key」输入框，点「<b>💾 保存并生效</b>」。</li>
+        <li>右下角的鲸之石亮起 = 成功。从此聊天、起名、遗言，都有了灵魂。</li>
+        <li>费用可忽略：一次对话只有几十 token，几毛钱能聊很久很久。</li>
+      </ol>
+    </div>
+    <div class="settings-body">
+      <label class="set-label">API Key（密语） <span id="set-key-state" class="key-state"></span></label>
+      <input id="set-key" type="password" placeholder="sk-…（留空 = 不修改）" autocomplete="off">
+      <button id="set-clear" class="set-clear" title="删除已保存的 Key">🗑 抹去密语</button>
+
+      <label class="set-label">接口地址（Base URL）</label>
+      <input id="set-url" type="text" spellcheck="false">
+
+      <label class="set-label">模型</label>
+      <input id="set-model" type="text" spellcheck="false" list="model-list">
+      <datalist id="model-list">
+        <option value="deepseek-chat"></option>
+        <option value="deepseek-reasoner"></option>
+      </datalist>
+
+      <button id="set-save" class="primary set-save">💾 刻入密语，唤醒鲸</button>
+      <p class="settings-note">密语只保存在你本机的 .env 文件里，界面上永远只显示尾号。换别家模型只要地址兼容 OpenAI 接口即可。</p>
+    </div>
+  </aside>
+
+  <!-- 漂流瓶字条 -->
+  <div id="bottle-overlay" class="overlay hidden">
+    <div class="overlay-card bottle-card">
+      <p class="bottle-eyebrow">🧴 漂流瓶 · 深海拾句</p>
+      <p id="bottle-text">…</p>
+      <button class="primary" data-close="bottle-overlay">收进背包</button>
+    </div>
+  </div>
+
+  <!-- 开场 -->
+  <div id="splash" class="overlay">
+    <div class="splash-inner">
+      <p class="splash-eyebrow">DEEP · SEA · AQUARIUM</p>
+      <h1 class="splash-title">万灵缸</h1>
+      <p class="splash-sub">一片会呼吸的深海，一群有名字的灵魂。</p>
+      <button id="btn-dive" class="primary big">潜 入 水 面</button>
+      <p class="splash-hint">建议全屏 · 声音无需 · 心情随意</p>
+    </div>
+  </div>
+
+  <!-- 星辰纪念 -->
+  <div id="star-overlay" class="overlay hidden">
+    <div class="overlay-card star-card">
+      <p class="star-eyebrow">⭐ 星辰 · 来自深渊的纪念</p>
+      <div id="star-info"></div>
+      <p id="star-last">…</p>
+      <button class="primary" data-close="star-overlay">收进背包</button>
+    </div>
+  </div>
+
+  <!-- 设置面板 -->
+  <div id="panel-settings-overlay" class="overlay hidden">
+    <div class="overlay-card settings-card">
+      <button class="close-btn" data-close="panel-settings-overlay">✕</button>
+      <h2>⚙️ 设置</h2>
+      <div class="settings-list">
+        <label class="settings-row" title="背景音乐 / 深海氛围">
+          <span class="settings-label">🎵 音乐</span>
+          <span class="settings-toggle"><input type="checkbox" id="music-check"></span>
+        </label>
+        <label class="settings-row" title="游戏音效（投喂、收集、孵化等）">
+          <span class="settings-label">🔊 音效</span>
+          <span class="settings-toggle"><input type="checkbox" id="sfx-check"></span>
+        </label>
+        <label class="settings-row" title="显示自家鱼的名字（路过鱼的名字始终分开显示）">
+          <span class="settings-label">🐟 显示鱼名</span>
+          <span class="settings-toggle"><input type="checkbox" id="show-names-check"></span>
+        </label>
+      </div>
+      <button class="primary" data-close="panel-settings-overlay">完成</button>
+    </div>
+  </div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
