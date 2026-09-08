@@ -31,6 +31,46 @@ export class Jellyfish {
     this.phase = rand(0, TAU);
     this.seed = rand(0, 100);
     this.vx = 0; this.vy = 0;
+    this._rebuildLimbs();
+
+    // ---- 身份：两只水母，一老一少 ----
+    this.isJelly = true;
+    this.passer = null;
+    this.dying = false;
+    this.stage = 0;
+    this.nutrition = 0;
+    this.ageDays = 0;
+    this.lifespanStd = 0;
+    this.chatLog = [];
+    this.chatQuick = null; // 水母不生成快捷短语
+    // 伪物种信息（供聊天面板展示名字/稀有度/肖像光晕）
+    this.sp = {
+      id: 'jelly-' + (variant === 0 ? 'old' : 'young'),
+      name: variant === 0 ? '月水母' : '灯辉水母',
+      rarity: variant === 0 ? 3 : 2,
+      glow: variant === 0 ? 'rgba(255,175,205,0.55)' : 'rgba(110,240,255,0.5)',
+    };
+    if (variant === 0) {
+      // 老水母：深沉、永生、见证过万灵缸诞生，谜语人
+      this.persona = {
+        name: '澜',
+        personality: '古老而沉静，见过太多，话像深海一样深',
+        style: '说一半留一半，爱用海与时间的比喻',
+        playerNamed: false,
+      };
+    } else {
+      // 小水母：活泼开朗，关注当下生态，给人指导
+      this.persona = {
+        name: '沫沫',
+        personality: '好奇心旺盛，总第一个冒泡，喜欢热闹',
+        style: '蹦蹦跳跳，爱用感叹号，什么都想教你',
+        playerNamed: false,
+      };
+    }
+  }
+
+  // 重建触须/口腕（px 根点基于当前 x/y/r；头像渲染会先改 x/y/r 再调用）
+  _rebuildLimbs() {
     this.tentacles = [];
     const n = 7;
     for (let i = 0; i < n; i++) {
@@ -41,7 +81,6 @@ export class Jellyfish {
         pts: makeChain(9, this.r * 0.42, this.x + off * this.r * 0.16, this.y + this.r * 0.5),
       });
     }
-    // 口腕（短而粗的几条）
     this.arms = [];
     for (let i = 0; i < 4; i++) {
       const off = (i - 1.5) * 0.22;
@@ -51,6 +90,22 @@ export class Jellyfish {
         pts: makeChain(5, this.r * 0.3, this.x + off * this.r, this.y + this.r * 0.4),
       });
     }
+  }
+
+  // 静态头像：用与海里完全一致的画法渲染一只水母标本
+  static portrait(variant, size = 96) {
+    const j = new Jellyfish(size, size, variant);
+    // 摆成好看的姿势：伞盖居中偏上，下方留出触须空间
+    j.x = size / 2;
+    j.y = size * 0.42;
+    j.r = size * 0.3;
+    j.phase = rand(0, TAU);
+    j._rebuildLimbs();
+    const c = document.createElement('canvas');
+    c.width = size; c.height = size;
+    const ctx = c.getContext('2d');
+    j.draw(ctx, rand(0, 20));
+    return c;
   }
 
   update(dt, t, w, h) {

@@ -201,6 +201,12 @@ function selectFish(fish) {
   });
 }
 
+function selectJelly(j) {
+  playSfx('select');
+  deselect();
+  chat.openFor(j, {});
+}
+
 function deselect() {
   if (selected) selected.hold = null;
   selected = null;
@@ -254,6 +260,8 @@ function spawnPasser() {
   const dir = Math.random() < 0.5 ? 1 : -1;
   const f = new Fish(sp, dir > 0 ? -60 : W + 60, rand(H * 0.15, world.floorY - 90), {
     passer: { dir, purpose },
+    ageDays: rand(1.2, 6),           // 旅人：随机年龄，至少少年起步
+    nutrition: 100,                  // 营养充足，让阶段按年龄至少到少年/成年
   });
   // 化名与性格是本地白送的；只有聊天才消耗 AI token
   if (AI.online) f.persona = makePasserPersona();
@@ -300,6 +308,7 @@ async function hatch(egg) {
               : `孵化出了一条${egg.sp.name}`,
     egg.sp.rarity >= 2 || firstTime,
   );
+  if (egg.sp.rarity >= 2) unlockLore('rare', '🌌 深海的低语：从一具巨大的温柔里，生出这么多小生命。');
 
   // AI 档案
   if (AI.online) {
@@ -313,6 +322,27 @@ async function hatch(egg) {
   } else {
     fallbackPersona(fish);
   }
+}
+
+// ---------- 深海叙事：首次事件解锁老水母的线索 ----------
+const LORE_KEY = 'wanling.lore';
+function loadLore() {
+  const d = { grown: false, bottle: false, rare: false, bury: false };
+  try { return { ...d, ...(JSON.parse(localStorage.getItem(LORE_KEY) || '{}')) }; } catch { return d; }
+}
+let lore = loadLore();
+function unlockLore(key, text) {
+  if (lore[key]) return; // 每类只触发一次
+  lore[key] = true;
+  try { localStorage.setItem(LORE_KEY, JSON.stringify(lore)); } catch { /* 忽略 */ }
+  const old = jellies.find((j) => j.sp.id === 'jelly-old');
+  if (old) old.unlockedCount = (old.unlockedCount || 0) + 1;
+  UI.toast(text, true);
+}
+// 加载时，把已保存的解锁数赋给老水母（跨刷新记住进度）
+{
+  const _old = jellies.find((j) => j.sp.id === 'jelly-old');
+  if (_old) _old.unlockedCount = Object.values(lore).filter(Boolean).length;
 }
 
 async function openBottle(b) {
@@ -330,6 +360,7 @@ async function openBottle(b) {
   // 收进背包，记录时间
   collection.addToBackpack({ id: `bp${Date.now()}${Math.floor(Math.random() * 999)}`, type: 'bottle', note: core, time: Date.now() });
   UI.toast('🧴 漂流瓶已收进背包');
+  unlockLore('bottle', '🌊 深海的低语：有些话，沉得比石头还深。');
   // AI 在后台扩充句库（验收合格才入库）
   maybeEnrich();
 }
@@ -412,6 +443,9 @@ function hitTest(x, y) {
   for (const f of sorted) {
     if (Math.hypot(f.x - x, f.y - y) < 24 * f.sizeScale + 10) return { type: 'fish', obj: f };
   }
+  for (const j of jellies) {
+    if (Math.hypot(j.x - x, j.y - y) < j.r + 22) return { type: 'jelly', obj: j };
+  }
   return null;
 }
 
@@ -429,10 +463,11 @@ canvas.addEventListener('pointerdown', (e) => {
 });
 
 canvas.addEventListener('click', (e) => {
-  if (e.detail >= 2) return; // 双击交给敲缸
   if (dragItem) return;
   const x = e.clientX, y = e.clientY;
   const hit = hitTest(x, y);
+  // 双击只留给"开阔水域敲缸"；命中了对象（鱼/尘/卵等）就始终处理，避免快速连点时丢掉第二次
+  if (e.detail >= 2 && !hit) return;
   if (hit) {
     if (hit.type === 'dust') return collectDust(hit.obj);
     if (hit.type === 'stone') {
@@ -444,6 +479,7 @@ canvas.addEventListener('click', (e) => {
     if (hit.type === 'bottle') return openBottle(hit.obj);
     if (hit.type === 'egg') return hatch(hit.obj);
     if (hit.type === 'fish') return selectFish(hit.obj);
+    if (hit.type === 'jelly') return selectJelly(hit.obj);
   }
   if (fedOnDown) { fedOnDown = false; return; } // 按下时已经撒过饵了
   feed(x, y);
@@ -452,10 +488,8 @@ let fedOnDown = false;
 
 canvas.addEventListener('dblclick', (e) => {
   const x = e.clientX, y = e.clientY;
-  // 点中鱼就不敲缸
-  for (const f of fishes) {
-    if (Math.hypot(f.x - x, f.y - y) < 24 * f.sizeScale + 10) return;
-  }
+  // 命中了任何可交互对象（鱼/水母/尘/卵/瓶/星/石）就不敲缸，交给 click 处理
+  if (hitTest(x, y)) return;
   shockwave(x, y);
 });
 
@@ -482,6 +516,7 @@ el('btn-egg').addEventListener('click', buyEgg);
 el('btn-help').addEventListener('click', () => UI.togglePanel('help-overlay', true));
 el('btn-dive').addEventListener('click', () => {
   el('splash').classList.add('hidden');
+  worldPaused = false; // 进入游戏：世界恢复运转
   UI.showGameChrome();
 });
 
@@ -523,6 +558,7 @@ function resetRun() {
 el('btn-exit').addEventListener('click', () => {
   hideAllPanels();
   UI.hideGameChrome();
+  worldPaused = true; // 回到标题：冻结整个世界
   el('splash').classList.remove('hidden');
 });
 
@@ -727,7 +763,7 @@ function renderBackpack() {
   const list = el('backpack-list');
   const items = collection.backpack;
   const trash = collection.trash;
-  const counts = { main: items.length, fav: items.filter((i) => i.fav).length, trash: trash.length };
+  const counts = { main: items.filter((i) => !i.fav).length, fav: items.filter((i) => i.fav).length, trash: trash.length };
 
   document.querySelectorAll('.bp-tab').forEach((b) => {
     b.classList.toggle('active', b.dataset.view === backpackView);
@@ -796,7 +832,9 @@ function renderBackpack() {
       del.textContent = '🗑';
       del.addEventListener('pointerdown', (e) => e.stopPropagation());
       del.addEventListener('click', (e) => { e.stopPropagation(); collection.toTrash(item.id); UI.toast('已移入垃圾箱'); });
-      row.append(fav, edit, del);
+      // 爱心(收藏夹)里的珍藏不能丢进垃圾桶，因此不显示删除按钮
+      row.append(fav, edit);
+      if (backpackView !== 'fav') row.append(del);
 
       const hint = document.createElement('span');
       hint.className = 'bp-hint';
@@ -824,7 +862,9 @@ function renderBackpack() {
     for (const item of trash) rows.push(buildRow(item, true));
     if (!rows.length) rows.push(bpEmpty('垃圾箱是空的'));
   } else {
-    const src = backpackView === 'fav' ? items.filter((i) => i.fav) : items;
+    const src = backpackView === 'fav'
+      ? items.filter((i) => i.fav)
+      : backpackView === 'main' ? items.filter((i) => !i.fav) : items;
     for (const item of src) rows.push(buildRow(item, false));
     if (!rows.length) {
       rows.push(bpEmpty(backpackView === 'fav' ? '收藏夹还是空的 — 点字条旁的 ♡' : '空空如也，去海里捡瓶子吧'));
@@ -876,7 +916,7 @@ function startBottleDrag(e, item) {
   dragItem = { ...item };
   ghostEl = document.createElement('div');
   ghostEl.className = 'bp-ghost';
-  ghostEl.textContent = '🧴';
+  ghostEl.textContent = item.type === 'star' ? '⭐' : '🧴'; // 图标与所拖物品统一
   document.body.appendChild(ghostEl);
   moveGhost(e.clientX, e.clientY);
   window.addEventListener('pointermove', moveGhost);
@@ -946,12 +986,12 @@ function updateEnvChip(t) {
 
 // ---------- 调试/测试钩子 ----------
 window.__tank = {
-  fishes, eggs, foods, dusts, collection, weather, bottles, stars, starQueue,
+  fishes, eggs, foods, dusts, jellies, collection, weather, bottles, stars, starQueue,
   get bottleTimer() { return bottleTimer; },
   set bottleTimer(v) { bottleTimer = v; },
   get passerTimer() { return passerTimer; },
   set passerTimer(v) { passerTimer = v; },
-  feed, buyEgg, hatch, selectFish, shockwave, saveFish, collectDust,
+  feed, buyEgg, hatch, selectFish, shockwave, saveFish, collectDust, selectJelly, unlockLore,
   spawnDust: (x, y, n) => { const d = new DustMote(x ?? W * 0.5, y ?? H * 0.5, n ?? 2); dusts.push(d); return d; },
   spawnFish: (id) => { const sp = SPECIES.find((s) => s.id === id) || SPECIES[0]; const f = new Fish(sp, W * 0.35, H * 0.35); fishes.push(f); return f; },
   spawnBottle: (x, note) => { const b = new Bottle(x ?? rand(W * 0.3, W * 0.7), note ?? null); bottles.push(b); return b; },
@@ -961,6 +1001,7 @@ window.__tank = {
 // ---------- 主循环 ----------
 let last = performance.now();
 let saveTimer = 0;
+let worldPaused = true; // 页面加载即在标题界面：先暂停，点「潜入水面」才运转
 function tick(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
@@ -979,6 +1020,7 @@ function tick(now) {
       f.justGrew = false;
       UI.toast(`🐟 「${f.persona?.name || f.sp.name}」长成了${STAGE_NAMES[f.stage]}！`, true);
       if (selected === f) chat.updateGrowth(f);
+      if (f.stage >= 2) unlockLore('grown', '🌾 深海的低语：营养从不属于我，它只是路过我。');
     }
   }
   // 路过鱼游出屏幕，就此道别
@@ -1012,6 +1054,7 @@ function tick(now) {
         starQueue.push({ x: f.burrowX, timer: 60, info, noteP });
         sparkles.burst(f.burrowX, world.floorY - 10, rgba('#c9b28a', 0.9), 16, 70, false);
         UI.toast(`🌊 「${info.name}」已长眠于沙床之下`, true);
+        unlockLore('bury', '🌫 深海的低语：它沉下去的时候，像一整片海在休息。');
       }
     }
   }
@@ -1279,13 +1322,15 @@ function tick(now) {
 }
 function loop(now) {
   lastRaf = now;
-  tick(now);
+  if (!worldPaused) tick(now);
   requestAnimationFrame(loop);
 }
 // 看门狗：rAF 被浏览器节流（如标签页在后台）时，用定时器补帧，保证鱼继续成长
 let lastRaf = performance.now();
 setInterval(() => {
-  if (performance.now() - lastRaf > 250) tick(performance.now());
+  if (!worldPaused && performance.now() - lastRaf > 250) tick(performance.now());
 }, 100);
 resize();
+// 标题界面：先渲染一帧静态深海作为背景，随后保持暂停
+tick(performance.now());
 requestAnimationFrame(loop);

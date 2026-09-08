@@ -1,5 +1,6 @@
 // ============ AI：DeepSeek 档案生成 + 鱼的聊天面板 ============
 import { el, TAU } from './util.js';
+import { Jellyfish } from './jellyfish.js';
 import { RARITY_NAMES } from './species.js';
 import { STAGE_NAMES, STAGE_NUT } from './fish.js';
 import { speciesPortrait } from './portrait.js';
@@ -105,30 +106,68 @@ export async function generatePersona(fish) {
 }
 
 // ---------- 聊天面板 ----------
+// 水母的专属对话系统提示（老/小性格不同；老水母按解锁进程逐层透露）
+function jellySystem(j) {
+  const p = j.persona;
+  const oldJelly = j.sp.id === 'jelly-old';
+  const revealed = j.unlockedCount || 0;
+  let base;
+  if (oldJelly) {
+    base = [
+      `你是「澜」，一只古老而永生的大水母，见证过「万灵缸」的诞生。你把深海的秘密藏在心底，从不轻易道破。`,
+      `性格：${p.personality}。说话方式：${p.style}。`,
+      '你说话像深海一样慢、深、留有余地，习惯用海与时间的比喻；对你面前的这位灵魂友好但保持距离，喜欢反问、点到即止，从不把话说满。',
+      '规则：始终以澜的身份说话；每次回复不超过3句话；可以引用你见证过的事，但永远只说「一半」，剩下的留白；不要出戏，不要提到自己是AI或程序。',
+    ].join('\n');
+    if (revealed > 0) {
+      base += '\n\n【关于来访者】你感到这位来访者身上有一点熟悉的气息——那是你还不敢确认的东西。你偶尔会透露一点线索，但总在关键处停下：';
+      base += '\n' + revealLine(j);
+    }
+  } else {
+    base = [
+      `你是「沫沫」，一只年轻活泼的小水母，好奇又热心，总想陪人聊天、教人怎么玩。`,
+      `性格：${p.personality}。说话方式：${p.style}。`,
+      '你眼里只有眼前的鱼儿、发光的尘、漂流瓶、今天的好天气，和这位愿意陪你说话的灵魂。你热情真诚，乐于分享海里的趣事和游玩心得。',
+      '规则：始终以沫沫的身份说话；每次回复不超过3句话；活泼、友善、多用感叹号，偶尔冒出泡泡的拟声；不要出戏，不要提到自己是AI或程序。',
+    ].join('\n');
+  }
+  return base;
+}
+function revealLine(j) {
+  const lines = [
+    '【约·壹】很久以前，海比现在更安静。有一个声音，比浪潮还要低……',
+    '【约·贰】它不是消失了，只是把自己铺成了这片海。',
+    '【约·叁】你带来的那些营养，也许本就来自很远、很深的某个地方。',
+    '【约·肆】有些瓶子，装着不是墨水写就的话。',
+  ];
+  return lines[Math.min(lines.length - 1, Math.max(0, (j.unlockedCount || 1) - 1))] || '';
+}
+
 function personaSystem(fish) {
+  if (fish.isJelly) return jellySystem(fish);
   const p = fish.persona;
   let base;
   if (fish.passer) {
     base = [
       `你是一条路过「万灵缸」的${fish.sp.name}，路上用的化名叫「${p.name}」（${RARITY_NAMES[fish.sp.rarity]}）。`,
       `你此刻正在${fish.passer.purpose}。性格：${p.personality}。说话方式：${p.style}。`,
-      '你是旅人，对缸里的住民和访客友好但保持洒脱，可能会提到你的旅程和要去的地方，聊完了你还要继续赶路。',
+      '你是旅人，对这片深海里的生灵和与你同游的灵魂友好但保持洒脱，可能会提到你的旅程和要去的地方，聊完了你还要继续赶路。',
       '规则：始终以这条鱼的身份说话；每次回复不超过3句话；不要出戏，不要提到自己是AI。',
     ].join('\n');
   } else {
     base = [
-      `你是「万灵缸」深海缸里的一条名叫「${p.name}」的${fish.sp.name}（${RARITY_NAMES[fish.sp.rarity]}）。`,
+      `你是「万灵缸」深海里的一个生灵，名叫「${p.name}」的${fish.sp.name}（${RARITY_NAMES[fish.sp.rarity]}）。`,
       `性格：${p.personality}`,
       `说话方式：${p.style}`,
-      '你生活在缸中：有细沙床、摇曳的海草、几只水母邻居，和一位偶尔来投喂的访客（就是正在和你说话的人）。',
-      '规则：始终以这条鱼的身份说话；每次回复不超过3句话；可以用海洋的比喻；不要出戏，不要提到自己是AI或程序；如果访客投喂过你，可以顺便感谢。',
+      '你生活在片辽阔的深海：有细沙床、摇曳的海草、几只水母邻居，还有一缕与你相伴的深海意志（就是正在和你说话的人）。你自由生长，从不是谁的造物，只是这片海的孩子。',
+      '规则：始终以这条鱼的身份说话；每次回复不超过3句话；可以用海洋的比喻；不要出戏，不要提到自己是AI或程序；如果那缕意志曾把食物让给你，你可以温柔地致谢。',
     ].join('\n');
   }
   if (fish.dying) {
     base += '\n\n' + [
       '【最重要的处境】你大限将至——明天你就会钻进海床长眠，这是深海的天命，无法更改。',
       `你此刻的主导情绪是：「${fish.dyingEmotion || '平静的坦然'}」。情绪起伏很大，每次开口时的感受都不太一样。`,
-      '你可以回顾自己的一生（你在这口缸里长大、被投喂、被陪伴）、表达对访客的感情、交代想留的话。依然以你的性格和说话方式表达，不要突然变成另一个人。',
+      '你可以回顾自己的一生（你在这片海里长大、被滋养、被陪伴）、表达对那缕深海意志的眷恋、交代想留的话。依然以你的性格和说话方式表达，不要突然变成另一个人。',
     ].join('\n');
   }
   return base;
@@ -164,14 +203,18 @@ export class ChatPanel {
     // 离线模式下给没名字的缸内住民一个本地档案（路过鱼保持无名）
     if (!fish.persona && !AI.online && !fish.passer) fallbackPersona(fish);
     this.nameEl.textContent = fish.persona ? fish.persona.name : '未登记的小家伙';
-    this.speciesEl.textContent = `${fish.sp.name} · ${RARITY_NAMES[fish.sp.rarity]}`;
-    // 路过鱼的名字不可修改：隐藏改名按钮
-    el('btn-rename').style.display = fish.passer ? 'none' : '';
+    this.speciesEl.textContent = fish.isJelly
+      ? fish.sp.name
+      : `${fish.sp.name} · ${RARITY_NAMES[fish.sp.rarity]}`;
+    // 路过鱼 / 水母的名字不可修改：隐藏改名按钮
+    el('btn-rename').style.display = (fish.passer || fish.isJelly) ? 'none' : '';
     this.updateGrowth(fish);
     this.updateProfile(fish);
     this.drawAvatar(fish);
     this.log.replaceChildren();
     this.panel.classList.remove('hidden');
+    // 生成档案按钮：对水母/路过鱼隐藏
+    this.personaBtn.style.display = (fish.passer || fish.isJelly) ? 'none' : '';
     // 离线时显示"不会说话"的小字提示
     el('chat-offline-note').classList.toggle('hidden', !!AI.online);
     // 重放历史聊天：关掉再打开，记忆还在
@@ -184,8 +227,14 @@ export class ChatPanel {
     } else {
       let hello;
       if (!AI.online) {
-        // 离线：鱼儿只会咕噜咕噜
-        hello = OFFLINE_REPLIES[(Math.random() * OFFLINE_REPLIES.length) | 0];
+        // 离线：鱼咕噜，水母只静静发光（无法真正交流）
+        hello = fish.isJelly
+          ? (fish.sp.id === 'jelly-old' ? '（巨大的水母安静地悬浮着，光芒一明一暗……似乎藏着许多话，却无从说起。）' : '（小水母蹦跶着绕了你一圈，但因为没有 AI，它只能吐泡泡。）')
+          : OFFLINE_REPLIES[(Math.random() * OFFLINE_REPLIES.length) | 0];
+      } else if (fish.isJelly) {
+        hello = fish.sp.id === 'jelly-old'
+          ? '澜：……（水母缓缓转过来，仿佛从很深的梦里醒来）来吧，你想知道些什么？'
+          : '沫沫：哇！又有人来找我玩啦～你想学点什么，还是我带你看看海里的小家伙？';
       } else if (fish.persona) {
         hello = `${fish.persona.name}：${fish.persona.personality}——你在叫我吗？`;
       } else if (fish.passer) {
@@ -203,7 +252,7 @@ export class ChatPanel {
   renderQuick(fish) {
     const box = el('chat-quick');
     box.replaceChildren();
-    if (!fish || !AI.online) return;
+    if (!fish || fish.isJelly || !AI.online) return;
     for (let i = 0; i < 3; i++) {
       const b = document.createElement('button');
       b.type = 'button';
@@ -229,7 +278,7 @@ export class ChatPanel {
   async loadQuickPhrases(fish) {
     if (!AI.online || !fish) return null;
     const t = performance.now() / 1000;
-    let envDesc = '缸里很平静';
+    let envDesc = '海里很平静';
     try {
       const w = window.__tank.weather;
       if (w) {
@@ -241,13 +290,13 @@ export class ChatPanel {
     const hunger = fish.nutrition < STAGE_NUT[fish.stage] * 0.4 ? '有点饿' : '吃得不错';
     const interacted = fish.chatLog.length > 2 ? '你们刚聊过几句' : '还没怎么聊过';
     const system = [
-      '你是万灵缸的旁白。为访客生成 3 条「快捷短语」——访客点击后会原文发给这条鱼。',
+      '你是万灵缸的旁白。为与这条鱼相遇的灵魂生成 3 条「快捷短语」——点击后会原文发给这条鱼。',
       `鱼儿：${fish.persona?.name || '未命名'}（${fish.sp.name}，${stage}）。性格：${fish.persona?.personality || '神秘'}。说话方式：${fish.persona?.style || ''}。`,
-      `它 ${fish.ageDays.toFixed(1)} 天大（寿命 ${fish.lifespanStd} 天），${hunger}，${interacted}。缸里现在${envDesc}。`,
+      `它 ${fish.ageDays.toFixed(1)} 天大（寿命 ${fish.lifespanStd} 天），${hunger}，${interacted}。海里现在${envDesc}。`,
       fish.dying
-        ? '它已进入弥留——这三句请以访客的口吻问它一生的话题：这一生开心吗、有没有遗憾、最想被记住的是什么、有什么想托付给你的、它害怕吗。温柔真诚，像好好的告别。'
-        : '三句以访客的口吻切入：对它的提问、寒暄、夸奖或关心，也可以聊聊当下的天气、吃的、缸里的生活。',
-      '要求：以访客（玩家）的第一人称对鱼儿说话，不是鱼的台词；每条不超过 14 个字，口语化、有温度；三条角度不同。只输出 JSON：{"suggestions":["…","…","…"]}',
+        ? '它已进入弥留——这三句请以深海同游者的口吻问它一生的话题：这一生开心吗、有没有遗憾、最想被记住的是什么、有什么想托付给你的、它害怕吗。温柔真诚，像好好的告别。'
+        : '三句以深海同游者的口吻切入：对它的提问、寒暄、夸奖或关心，也可以聊聊当下的天气、吃的、海里的生活。',
+      '要求：以你（与鱼相遇的灵魂）的第一人称对鱼儿说话，不是鱼的台词；每条不超过 14 个字，口语化、有温度；三条角度不同。只输出 JSON：{"suggestions":["…","…","…"]}',
     ].join('\n');
     const reply = await AI.chat(system, [{ role: 'user', content: '生成 3 条快捷短语。' }], 1.2, 160);
     const m = reply.match(/\{[\s\S]*\}/);
@@ -259,6 +308,20 @@ export class ChatPanel {
   // 成长状态：阶段 / 营养条 / 年龄与寿命
   updateGrowth(fish) {
     if (!fish) return;
+    // 水母：没有成长期，隐藏成长条/营养，阶段标签显示"年龄未知"（同幼年/成年的胶囊样式）
+    if (fish.isJelly) {
+      el('chat-stage').style.display = '';
+      el('chat-stage').textContent = '年龄未知';
+      el('chat-stage').classList.remove('dying');
+      const bar = document.querySelector('.grow-bar');
+      if (bar) bar.style.display = 'none';
+      el('chat-grow-num').textContent = '';
+      el('chat-age').textContent = '';
+      return;
+    }
+    el('chat-stage').style.display = '';
+    const bar = document.querySelector('.grow-bar');
+    if (bar) bar.style.display = '';
     el('chat-stage').textContent = fish.dying ? '弥留' : STAGE_NAMES[fish.stage];
     el('chat-stage').classList.toggle('dying', !!fish.dying);
     el('chat-grow-num').textContent = `${fish.nutrition}/${STAGE_NUT[fish.stage]}`;
@@ -356,7 +419,7 @@ export class ChatPanel {
 
     // 弥留的鱼情绪波动大：每次开口前随机一种主导情绪
     if (fish.dying) {
-      const EMOTIONS = ['深深的绝望', '平静的坦然', '绵长的伤感', '释然的快乐', '对访客的不舍', '幽默的豁达', '满心的感激'];
+      const EMOTIONS = ['深深的绝望', '平静的坦然', '绵长的伤感', '释然的快乐', '对这片海的眷恋', '幽默的豁达', '满心的感激'];
       fish.dyingEmotion = EMOTIONS[(Math.random() * EMOTIONS.length) | 0];
     }
 
@@ -375,9 +438,15 @@ export class ChatPanel {
 
     if (!AI.online) {
       typing.remove();
-      // 没有 AI 时，鱼儿只会用预设的"咕噜咕噜"回应
-      const reply = OFFLINE_REPLIES[(Math.random() * OFFLINE_REPLIES.length) | 0];
-      this.push('fish', reply);
+      // 没有 AI 时：鱼用预设"咕噜咕噜"，水母只静静发光
+      if (fish.isJelly) {
+        this.push('fish', fish.sp.id === 'jelly-old'
+          ? '……（水母的触手轻轻晃动，光芒一明一暗，像在无声地回应着什么，却终未开口。）'
+          : '咕噜噜～（小水母吐了个泡泡蹭了蹭你，但因为还没有 AI，它只能吐泡泡啦。）');
+      } else {
+        const reply = OFFLINE_REPLIES[(Math.random() * OFFLINE_REPLIES.length) | 0];
+        this.push('fish', reply);
+      }
       this.busy = false;
       return;
     }
@@ -430,6 +499,13 @@ export class ChatPanel {
     const ctx = c.getContext('2d');
     const W = c.width, H = c.height;
     ctx.clearRect(0, 0, W, H);
+    // ……水母：复用海里完全一致的画法渲染头像
+    if (fish.isJelly) {
+      const variant = fish.sp.id === 'jelly-old' ? 0 : 1;
+      const p = Jellyfish.portrait(variant, W);
+      if (p) ctx.drawImage(p, 0, 0, W, H);
+      return;
+    }
     // 氛围底光
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';

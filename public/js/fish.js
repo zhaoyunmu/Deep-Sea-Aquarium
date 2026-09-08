@@ -114,7 +114,7 @@ export class Fish {
     return 34 * this.sizeScale * (this.sp.elongate || 1);
   }
 
-  update(dt, t, world, fishes, foods, cursor, env = { rain: 0, storm: 0 }) {
+  update(dt, t, world, fishes, foods, cursor, env = { rain: 0, storm: 0 }, ts = 1) {
     // 钻沙：缓缓沉入海床深处，10 秒后永远消失（移除与星星由主循环负责）
     if (this.burrowing) {
       this.burrowT += dt;
@@ -282,8 +282,9 @@ export class Fish {
     this.y += this.vy * dt;
     this.y = Math.min(Math.max(this.y, 24), floor);
 
-    // 年龄随游戏天数增长；大限将至 → 弥留，一天后钻沙
-    this.ageDays += dt / DAY_SECONDS;
+    // 年龄随游戏天数增长；大限将至 → 弥留，一天后钻沙（受时间缩放控制：标题时 ts=0 则不长大）
+    const gdt = dt * ts;
+    this.ageDays += gdt / DAY_SECONDS;
     if (!this.passer) {
       if (!this.dying && this.ageDays >= this.lifespanActual) {
         this.dying = true;

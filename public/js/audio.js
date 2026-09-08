@@ -35,24 +35,47 @@ function ensureCtx() {
   ctx = new AC();
   masterGain = ctx.createGain(); masterGain.gain.value = 0.6; masterGain.connect(ctx.destination);
   musicGain = ctx.createGain(); musicGain.gain.value = 0.5; musicGain.connect(ctx.destination);
+  // 保活：非零极低频“底噪”。浏览器按“是否有持续声音输出”判断是否挂起 AudioContext，
+  // 故不能用 gain=0 的静音；用几乎听不见的低频底噪让 context 保持 running，音效才稳定。
+  try {
+    const keepBuf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+    const kd = keepBuf.getChannelData(0);
+    let last = 0;
+    for (let i = 0; i < kd.length; i++) { last = last * 0.99 + (Math.random() * 2 - 1) * 0.02; kd[i] = last; }
+    const keep = ctx.createBufferSource(); keep.buffer = keepBuf; keep.loop = true;
+    const keepFilt = ctx.createBiquadFilter(); keepFilt.type = 'lowpass'; keepFilt.frequency.value = 160;
+    const keepGain = ctx.createGain(); keepGain.gain.value = 0.0011; // ≈ -59dB，几乎听不见
+    keep.connect(keepFilt); keepFilt.connect(keepGain); keepGain.connect(ctx.destination);
+    keep.start();
+  } catch { /* 忽略 */ }
   return ctx;
+}
+// 浏览器可能因“一段时间没声音”把 AudioContext 挂起（省电），发声前先恢复
+function ensureRunning() {
+  const c = ctx;
+  if (c && c.state === 'suspended') c.resume().catch(() => {});
+  return c;
 }
 export function unlock() {
   const c = ensureCtx();
-  if (c && c.state === 'suspended') c.resume();
+  if (c && c.state === 'suspended') c.resume().catch(() => {});
   if (!unlocked) { unlocked = true; applyMusic(); }
 }
-// 首次用户交互（点击/按键）自动解锁与启动氛围
+// 每次交互都尝试恢复（而非只首次），避免关掉音乐后被浏览器挂起导致的音效丢失
 if (typeof window !== 'undefined') {
-  const fire = () => { unlock(); window.removeEventListener('pointerdown', fire); window.removeEventListener('keydown', fire); };
-  window.addEventListener('pointerdown', fire);
-  window.addEventListener('keydown', fire);
+  const resumeNow = () => { ensureCtx(); if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {}); };
+  window.addEventListener('pointerdown', resumeNow);
+  window.addEventListener('keydown', resumeNow);
+  // 页面失焦/切后台时浏览器常会挂起 AudioContext；回到页面时主动恢复，避免音效丢/延迟
+  window.addEventListener('focus', resumeNow);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) resumeNow(); });
 }
 
 // ---- 合成一个渐变包络缓存的振荡器音 ----
 function tone({ freq = 440, endFreq = freq, dur = 0.3, type = 'sine', gain = 0.3, attack = 0.01, delay = 0 }) {
-  if (!ensureCtx() || !prefs.sfx) return;
-  const c = ctx, t0 = c.currentTime + delay;
+  const c = ensureRunning();
+  if (!c || !prefs.sfx) return;
+  const t0 = c.currentTime + delay;
   const o = c.createOscillator(), g = c.createGain();
   o.type = type;
   o.frequency.setValueAtTime(freq, t0);
@@ -66,8 +89,9 @@ function tone({ freq = 440, endFreq = freq, dur = 0.3, type = 'sine', gain = 0.3
 
 // ---- 合成一个短噪声（流水、气泡爆裂等） ----
 function noise({ dur = 0.3, gain = 0.2, freq = 800, q = 1, type = 'lowpass', delay = 0 }) {
-  if (!ensureCtx() || !prefs.sfx) return;
-  const c = ctx, t0 = c.currentTime + delay;
+  const c = ensureRunning();
+  if (!c || !prefs.sfx) return;
+  const t0 = c.currentTime + delay;
   const buf = c.createBuffer(1, c.sampleRate * dur, c.sampleRate);
   const data = buf.getChannelData(0);
   for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
