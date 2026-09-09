@@ -12,10 +12,12 @@ let unlocked = false;
 // ---- 开关状态（存 localStorage，与「显示鱼名」开关一致）----
 const MUSIC_KEY = 'wanling.music';
 const SFX_KEY = 'wanling.sfx';
-function readPref(key) { try { return localStorage.getItem(key) === '1'; } catch { return true; } }
+const MUSIC_VOL_KEY = 'wanling.musicVol';
+function readPref(key, def = true) { try { const v = localStorage.getItem(key); return v === null ? def : v; } catch { return def; } }
 export const prefs = {
-  music: readPref(MUSIC_KEY),
-  sfx: readPref(SFX_KEY),
+  music: readPref(MUSIC_KEY) !== '0',
+  sfx: readPref(SFX_KEY) !== '0',
+  musicVolume: parseFloat(readPref(MUSIC_VOL_KEY, '0.7')) || 0.7,
 };
 export function setMusic(v) {
   prefs.music = !!v;
@@ -26,6 +28,14 @@ export function setSfx(v) {
   prefs.sfx = !!v;
   try { localStorage.setItem(SFX_KEY, prefs.sfx ? '1' : '0'); } catch {}
 }
+export function setMusicVolume(v) {
+  prefs.musicVolume = clamp01(v);
+  try { localStorage.setItem(MUSIC_VOL_KEY, String(prefs.musicVolume)); } catch {}
+  // 应用到当前正在播放的声音源
+  if (bgAudio) bgAudio.volume = prefs.musicVolume;
+  if (musicGain) musicGain.gain.value = prefs.musicVolume * 0.5;
+}
+function clamp01(v) { return Math.max(0, Math.min(1, isFinite(v) ? v : 0.7)); }
 
 // ---- 懒加载 / 解锁 ----
 function ensureCtx() {
@@ -63,7 +73,11 @@ export function unlock() {
 }
 // 每次交互都尝试恢复（而非只首次），避免关掉音乐后被浏览器挂起导致的音效丢失
 if (typeof window !== 'undefined') {
-  const resumeNow = () => { ensureCtx(); if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {}); };
+  const resumeNow = () => {
+    ensureCtx();
+    if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
+    applyMusic(); // 用户手势：此时 play 被浏览器允许，启动/恢复背景音乐
+  };
   window.addEventListener('pointerdown', resumeNow);
   window.addEventListener('keydown', resumeNow);
   // 页面失焦/切后台时浏览器常会挂起 AudioContext；回到页面时主动恢复，避免音效丢/延迟
@@ -110,7 +124,7 @@ const SFX = {
   hatch()       { tone({ freq: 300, endFreq: 900, dur: 0.5, type: 'sine', gain: 0.2 }); tone({ freq: 450, endFreq: 1200, dur: 0.5, type: 'triangle', gain: 0.12, delay: 0.08 }); },
   egg()         { tone({ freq: 240, endFreq: 180, dur: 0.3, type: 'sine', gain: 0.18 }); noise({ dur: 0.15, gain: 0.1, freq: 400, type: 'lowpass' }); },
   shock()       { noise({ dur: 0.4, gain: 0.3, freq: 180, type: 'lowpass' }); tone({ freq: 120, endFreq: 60, dur: 0.4, type: 'sine', gain: 0.25 }); },
-  thunder()     { noise({ dur: 0.8, gain: 0.28, freq: 120, type: 'lowpass' }); noise({ dur: 0.6, gain: 0.15, freq: 90, type: 'lowpass', delay: 0.1 }); },
+  thunder()     { noise({ dur: 0.9, gain: 0.5, freq: 110, type: 'lowpass' }); noise({ dur: 0.7, gain: 0.32, freq: 75, type: 'lowpass', delay: 0.12 }); tone({ freq: 70, endFreq: 40, dur: 0.6, type: 'sine', gain: 0.32, delay: 0.04 }); },
   bubble()      { tone({ freq: 350, endFreq: 1200, dur: 0.09, type: 'sine', gain: 0.1 }); },
 };
 export function playSfx(name) {
@@ -154,8 +168,8 @@ function tryBgFile() {
     const a = new Audio();
     a.src = url;
     a.loop = true;
-    a.volume = 0.6;
-    a.addEventListener('canplaythrough', () => { bgAudio = a; }, { once: true });
+    a.volume = prefs.musicVolume;
+    a.addEventListener('canplaythrough', () => { bgAudio = a; applyMusic(); }, { once: true });
     a.addEventListener('error', () => { a.removeAttribute('src'); }, { once: true });
     a.load();
     if (a.readyState >= 3) { bgAudio = a; break; }
@@ -164,8 +178,8 @@ function tryBgFile() {
 }
 function applyMusic() {
   if (!prefs.music) { if (bgAudio) { bgAudio.pause(); } stopAmbience(); return; }
-  // 优先文件音乐
-  if (bgAudio) { bgAudio.play().catch(() => {}); return; }
+  // 优先文件音乐：先停掉合成氛围，避免叠声
+  if (bgAudio) { stopAmbience(); bgAudio.play().catch(() => {}); return; }
   // 无文件则用合成氛围
   buildAmbience();
 }

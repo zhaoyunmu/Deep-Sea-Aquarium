@@ -520,4 +520,8 @@ canvas#tank { position: fixed; inset: 0; display: block; cursor: crosshair; }
   width: calc(20px * var(--ui)); height: calc(20px * var(--ui)); accent-color: var(--glow);
   cursor: pointer;
 }
+.settings-toggle input[type="range"] {
+  width: calc(150px * var(--ui)); height: 4px; accent-color: var(--glow); margin: 0;
+}
+.settings-row:has(input[type="range"]) { padding: 14px 16px; }
 #panel-settings-overlay .overlay-card .primary { display: block; width: 100%; text-align: center; }

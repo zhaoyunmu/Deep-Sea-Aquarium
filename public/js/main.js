@@ -13,7 +13,7 @@ import { WhaleStone } from './stone.js';
 import { ClockStone } from './clockstone.js';
 import { AI, ChatPanel, generatePersona, fallbackPersona } from './ai.js';
 import * as UI from './ui.js';
-import { playSfx, prefs, setMusic, setSfx } from './audio.js';
+import { playSfx, prefs, setMusic, setSfx, setMusicVolume } from './audio.js';
 
 // ---------- 画布 ----------
 const canvas = el('tank');
@@ -754,6 +754,11 @@ function syncAudioToggles() {
 musicCheck.addEventListener('change', () => setMusic(musicCheck.checked));
 sfxCheck.addEventListener('change', () => setSfx(sfxCheck.checked));
 syncAudioToggles();
+
+// 音乐音量滑杆
+const musicVol = el('music-vol');
+musicVol.value = String(prefs.musicVolume);
+musicVol.addEventListener('input', () => setMusicVolume(parseFloat(musicVol.value)));
 
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
