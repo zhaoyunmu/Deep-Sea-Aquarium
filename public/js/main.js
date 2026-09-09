@@ -5,11 +5,12 @@ import { World } from './world.js';
 import { Fish, STAGE_NAMES, STAGE_NUT, makePasserPersona } from './fish.js';
 import { Jellyfish } from './jellyfish.js';
 import { Food, Egg, Sparkles, DustMote } from './food.js';
-import { Collection } from './collection.js';
+import { Collection, STORAGE_KEY as COLLECTION_KEY } from './collection.js';
 import { Weather } from './weather.js';
 import { Bottle, fetchNote, maybeEnrich } from './bottle.js';
 import { Star, generateLastWords } from './star.js';
 import { WhaleStone } from './stone.js';
+import { ClockStone } from './clockstone.js';
 import { AI, ChatPanel, generatePersona, fallbackPersona } from './ai.js';
 import * as UI from './ui.js';
 import { playSfx, prefs, setMusic, setSfx } from './audio.js';
@@ -55,6 +56,17 @@ let bottleTimer = rand(130, 240); // 漂流瓶出现频率：约 2~4 分钟一�
 const stars = [];      // 长眠鱼儿的星辰
 const starQueue = [];  // 待降落的星辰 { x, timer, info, noteP }
 const whaleStone = new WhaleStone(); // 鲸之石：嵌在海床里的石碑
+const clockStone = new ClockStone(); // 时钟日历：左下角海床上的石板
+
+// 总天数跨刷新保留
+const DAY_KEY = 'wanling.day';
+try {
+  const d = parseInt(localStorage.getItem(DAY_KEY) || '1', 10);
+  if (Number.isFinite(d) && d > 0) weather.dayCount = d;
+} catch { /* 忽略 */ }
+weather.onNewDay = (n) => {
+  try { localStorage.setItem(DAY_KEY, String(n)); } catch { /* 忽略 */ }
+};
 
 const fishes = [];
 
@@ -73,6 +85,7 @@ function resize() {
   for (const b of bottles) if (b.landed) b.y = world.floorY - 10;
   for (const st of stars) if (st.landed) st.y = world.floorY - 8;
   whaleStone.place(W, world);
+  clockStone.place(W, world);
   applyUIScale();
 }
 
@@ -115,8 +128,14 @@ function spawnPlankton(x, y, vx, vy, n = 2) {
 
 // ---------- 鱼的存档（年龄/营养/名字都会保留） ----------
 const FISH_KEY = 'wanling.fish.v1';
+const SLOT_KEY = 'wanling.slot.v1';        // 手动存档槽
+const PENDING_KEY = 'wanling.pendingRestore'; // 读档后待恢复的世界状态
+
+// 读档瞬间禁止自动保存覆盖（pagehide / 定时器都会触发 saveFish）
+let suppressSave = false;
 
 function saveFish() {
+  if (suppressSave) return;
   try {
     localStorage.setItem(FISH_KEY, JSON.stringify(
       fishes.filter((f) => !f.passer).slice(0, 30).map((f) => ({
@@ -185,6 +204,37 @@ function spawnInitial() {
   }
 }
 spawnInitial();
+
+// 读档后：把存档那一刻的天气、海里的漂流瓶与星辰一并还原
+function applyPendingRestore() {
+  let pw = null;
+  try {
+    pw = JSON.parse(localStorage.getItem(PENDING_KEY) || 'null');
+  } catch { pw = null; }
+  if (!pw) return;
+  try { localStorage.removeItem(PENDING_KEY); } catch { /* 忽略 */ }
+  if (pw.weather) Object.assign(weather, pw.weather);
+  if (Array.isArray(pw.bottles)) {
+    for (const b of pw.bottles) {
+      const nb = new Bottle(clamp(b.x, 20, W - 20), b.note ?? null);
+      nb.y = b.landed ? world.floorY - 10 : Math.min(b.y ?? 0, world.floorY - 20);
+      nb.landed = !!b.landed;
+      nb.sandAge = b.sandAge ?? 0;
+      nb.bury = clamp(nb.sandAge, 0, 1);
+      bottles.push(nb);
+    }
+  }
+  if (Array.isArray(pw.stars)) {
+    for (const s of pw.stars) {
+      const ns = new Star(clamp(s.x, 20, W - 20), s.info || { name: '无名' }, s.note ?? null);
+      ns.y = s.landed ? world.floorY - 8 : Math.min(s.y ?? 0, world.floorY - 20);
+      ns.landed = !!s.landed;
+      ns.age = s.age ?? 0;
+      stars.push(ns);
+    }
+  }
+}
+applyPendingRestore();
 
 collection.onchange = () => UI.updateHUD(collection.lumens, residentCount());
 
@@ -569,16 +619,112 @@ el('btn-settings').addEventListener('click', () => {
   UI.togglePanel('panel-settings-overlay', true);
 });
 
-el('btn-save').addEventListener('click', () => {
-  saveFish();
+// ---------- 存档槽：手动存档 / 读档 ----------
+
+// 把此刻的整缸状态打包
+function buildSnapshot() {
+  saveFish();            // 先把当前鱼群写进常规存档键
   collection.save();
-  UI.toast('💾 已保存当前进度');
+  let fish = [], eggs = [];
+  try {
+    fish = JSON.parse(localStorage.getItem(FISH_KEY) || '[]');
+    eggs = JSON.parse(localStorage.getItem(FISH_KEY + '.eggs') || '[]');
+  } catch { /* 忽略 */ }
+  return {
+    at: Date.now(),
+    fish,
+    eggs,
+    collection: JSON.parse(JSON.stringify(collection.data)),
+    lore: { ...lore },
+    weather: {
+      t0: weather.t0,
+      state: weather.state,
+      stateTimer: weather.stateTimer,
+      rainI: weather.rainI,
+      stormI: weather.stormI,
+      fireDawn: weather.fireDawn,
+      fireDusk: weather.fireDusk,
+      dayCount: weather.dayCount,
+    },
+    bottles: bottles.map((b) => ({ x: Math.round(b.x), y: Math.round(b.y), landed: b.landed, note: b.note ?? null, sandAge: b.sandAge })),
+    stars: stars.map((s) => ({ x: Math.round(s.x), y: Math.round(s.y), landed: s.landed, info: s.info, note: s.note ?? null, age: s.age })),
+  };
+}
+
+function slotInfo() {
+  try {
+    const s = JSON.parse(localStorage.getItem(SLOT_KEY) || 'null');
+    if (!s || !s.at) return null;
+    return { at: s.at, fish: (s.fish || []).length };
+  } catch { return null; }
+}
+
+function saveSlot() {
+  try {
+    localStorage.setItem(SLOT_KEY, JSON.stringify(buildSnapshot()));
+    return true;
+  } catch { return false; }
+}
+
+// 把存档写回常规存储键，然后刷新（所有既有加载逻辑都会读到它）
+function loadSlot() {
+  suppressSave = true; // 关键：别让卸载时的自动保存把还原的数据再盖回去
+  let s = null;
+  try { s = JSON.parse(localStorage.getItem(SLOT_KEY) || 'null'); } catch { s = null; }
+  if (!s) return false;
+  try {
+    localStorage.setItem(FISH_KEY, JSON.stringify(s.fish || []));
+    localStorage.setItem(FISH_KEY + '.eggs', JSON.stringify(s.eggs || []));
+    if (s.collection) localStorage.setItem(COLLECTION_KEY, JSON.stringify(s.collection));
+    if (s.lore) localStorage.setItem('wanling.lore', JSON.stringify(s.lore));
+    localStorage.setItem(PENDING_KEY, JSON.stringify({ weather: s.weather, bottles: s.bottles, stars: s.stars }));
+    return true;
+  } catch { return false; }
+}
+
+function fmtSlotTime(ts) {
+  const d = new Date(ts);
+  const p2 = (n) => String(n).padStart(2, '0');
+  return `${d.getMonth() + 1}/${d.getDate()} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+}
+
+function updateSlotUI() {
+  const info = slotInfo();
+  const saveBtn = el('btn-save');
+  const loadBtn = el('btn-load');
+  if (info) {
+    saveBtn.textContent = `💾 存档 ${fmtSlotTime(info.at)}`;
+    saveBtn.title = `覆盖存档槽（当前存档：${fmtSlotTime(info.at)}）`;
+    loadBtn.title = `读取 ${fmtSlotTime(info.at)} 的存档（${info.fish} 条鱼）`;
+    loadBtn.disabled = false;
+  } else {
+    saveBtn.textContent = '💾 存档';
+    saveBtn.title = '保存到存档槽（可随时读回）';
+    loadBtn.title = '还没有手动存档';
+    loadBtn.disabled = true;
+  }
+}
+
+el('btn-save').addEventListener('click', () => {
+  if (saveSlot()) {
+    updateSlotUI();
+    UI.toast('💾 已存入存档槽——之后随时可以读回来');
+  } else {
+    UI.toast('存档失败：浏览器存储空间不足');
+  }
 });
 
 el('btn-load').addEventListener('click', () => {
-  if (!window.confirm('读取最后一次保存的进度？当前未保存的进度将被覆盖。')) return;
-  location.reload(); // 存档在 localStorage，刷新即重新加载
+  const info = slotInfo();
+  if (!info) return UI.toast('还没有手动存档，先点「存档」');
+  if (!window.confirm(`读取 ${fmtSlotTime(info.at)} 的存档？
+
+缸里的鱼、发光尘、图鉴、天气都会回到那一刻（当前进度将被覆盖）。`)) return;
+  if (loadSlot()) location.reload();
+  else UI.toast('读档失败：存档已损坏');
 });
+
+updateSlotUI();
 
 el('btn-reset').addEventListener('click', () => {
   if (!window.confirm('重新开一局？将清空当前缸里的鱼群与未孵化的卵，但会保留图鉴收集进度与发光尘。')) return;
@@ -986,7 +1132,7 @@ function updateEnvChip(t) {
 
 // ---------- 调试/测试钩子 ----------
 window.__tank = {
-  fishes, eggs, foods, dusts, jellies, collection, weather, bottles, stars, starQueue,
+  fishes, eggs, foods, dusts, jellies, collection, weather, bottles, stars, starQueue, world, cursor,
   get bottleTimer() { return bottleTimer; },
   set bottleTimer(v) { bottleTimer = v; },
   get passerTimer() { return passerTimer; },
@@ -1197,6 +1343,9 @@ function tick(now) {
 
   // ---- 绘制 ----
   world.drawBack(ctx, t, env);
+  // 两块石板先画：它们躺在海床上，鱼、尘埃、饲料、瓶子、星星都从它们前面经过
+  whaleStone.draw(ctx, t);
+  clockStone.draw(ctx, t, weather.dayCount, weather.hourAt(t), weather.hourFrac(t));
   for (const j of jellies) j.draw(ctx, t);
   for (const f of [...fishes].sort((a, b) => a.z - b.z)) f.draw(ctx, t, env);
   for (const food of foods) food.draw(ctx);
@@ -1204,7 +1353,6 @@ function tick(now) {
   for (const egg of eggs) egg.draw(ctx, t);
   for (const b of bottles) b.draw(ctx, t, env);
   for (const st of stars) st.draw(ctx, t);
-  whaleStone.draw(ctx, t);
   sparkles.draw(ctx);
   world.drawMid(ctx, t, env);
 

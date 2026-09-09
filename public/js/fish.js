@@ -2,7 +2,7 @@
 import { TAU, rgba, shade, fadeColor, rand, clamp, SCALE } from './util.js';
 
 // ---- 成长系统：三个年龄阶段 ----
-export const DAY_SECONDS = 280;          // 一游戏天 = 一昼夜循环
+export const DAY_SECONDS = 240;          // 一游戏天 = 一昼夜循环（24 小时 × 10 秒）
 export const STAGE_AGES = [1, 2];        // 阶段门槛（天）：0-1天 / 1-2天 / 2天以上
 export const STAGE_NUT = [20, 50, 100];  // 每阶段营养点上限（升阶需吃满）
 export const STAGE_NAMES = ['幼年', '少年', '成年'];
@@ -245,8 +245,8 @@ export class Fish {
       else if (d < 48) { ax -= (dx / d) * 100; ay -= (dy / d) * 100; }
     }
 
-    // 拖动水流：按住鼠标快速划过会带动鱼
-    if (cursor.down && cursor.speed > 60) {
+    // 搅动水流：鼠标快速划过就会带动鱼（不必按住）
+    if (cursor.speed > 60) {
       const dx = this.x - cursor.x, dy = this.y - cursor.y;
       const d2 = dx * dx + dy * dy;
       if (d2 < 170 * 170) {

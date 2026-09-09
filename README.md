@@ -37,3 +37,23 @@ node server.js
 - `server.js` 只做两件事：托管静态文件 + 把 `/api/chat` 代理给 DeepSeek（key 不进浏览器）。
 - AI 不可用时自动降级为离线人格（随机名字 + 预设性格），随时可切换。
 - 想调难度：`public/js/main.js` 里的 `EGG_COST`、`MAX_FISH`；物种数值在 `public/js/species.js`。
+
+## 开发者指令（Dev Mode）
+
+在和**沫沫**（年轻水母）的聊天框里输入以 `/` 开头的指令，可以直接拨弄这片海——**本地执行，不消耗 AI token**，离线也能用。沫沫也能听懂自然语言（如"能帮我变回晴天吗"），她会在回复里嵌入指令自动执行。
+
+| 指令 | 效果 |
+| --- | --- |
+| `/help` | 列出所有指令 |
+| `/weather <晴\|小雨\|暴雨\|自动>` | 切换天气（也认 clear/rain/storm/auto） |
+| `/time <黎明\|白天\|黄昏\|夜晚>` | 跳到指定时辰 |
+| `/whale` | 立刻放一只鲸影游过 |
+| `/bottle [字条]` | 降一只漂流瓶（可带自定义字条） |
+| `/summon <物种> [营养0-100]` | 往缸里加一条鱼，例如 `/summon koi 100` |
+| `/lumens <数量 \| +N \| -N>` | 修改发光尘数量 |
+| `/farewell <鱼的名字>` | 让指定鱼进入弥留（大限将至） |
+| `/list` | 列出缸里的鱼（名字/物种/年龄） |
+| `/star [名字]` | 降一颗星辰（测试用） |
+| `/save` | 立刻保存进度 |
+
+实现见 `public/js/commands.js`。想扩展新指令，往 `COMMANDS` 数组里加一条即可（`name / alias / usage / desc / run(arg, T)`），`T` 就是 `window.__tank`。

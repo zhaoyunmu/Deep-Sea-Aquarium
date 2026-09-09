@@ -51,9 +51,15 @@ export class World {
     // 海草
     this.kelp = [];
     const kelpN = Math.max(5, Math.round(w / 240));
+    // 左下角时钟 / 右下角鲸之石：这两处不长海草，别挡住石板
+    const avoidStone = (x) => {
+      if (x < w * 0.155) return x + w * 0.13;
+      if (x > w * 0.755) return x - w * 0.11;
+      return x;
+    };
     for (let i = 0; i < kelpN; i++) {
       this.kelp.push({
-        x: ((i + 0.5) / kelpN) * w + rand(-90, 90),
+        x: avoidStone(((i + 0.5) / kelpN) * w + rand(-90, 90)),
         h: rand(70, 220), phase: rand(0, TAU), sway: rand(12, 38),
         width: rand(2.2, 4.4), hue: rand(160, 205),
         glowTip: Math.random() < 0.5,
@@ -115,7 +121,7 @@ export class World {
           y: this.h * rand(0.16, 0.36),
           speed: (this.w * 2.0) / dur * dir,
           bob: rand(0, 100),
-          size: Math.min(this.w, this.h) * rand(0.5, 0.62),
+          size: Math.min(this.w, this.h) * rand(0.82, 1.0),
         };
         if (this.whaleOnSpawn) this.whaleOnSpawn();
       }
@@ -274,38 +280,42 @@ export class World {
     ctx.strokeStyle = 'rgba(120,200,240,0.08)';
     ctx.lineWidth = 3;
 
-    // 身体
+    // 身体 + 尾巴：一条连续轮廓，后段随摆尾一起渐进弯曲（力从脊柱传来）
+    const stroke = Math.sin(t * 0.85 + W.bob);
+    const bendStart = -s * 0.2;                 // 从这里开始弯（身体后段）
+    const rearLen = s * 1.15;
+    const maxBend = stroke * 0.3;
+    const bendPt = (px, py) => {
+      if (px >= bendStart) return [px, py];
+      const tt = Math.min(1, (bendStart - px) / rearLen);
+      const a = maxBend * Math.pow(tt, 1.3);
+      const dx = px - bendStart;
+      return [bendStart + dx * Math.cos(a) - py * Math.sin(a), dx * Math.sin(a) + py * Math.cos(a)];
+    };
+    // 把轮廓采样成点，逐点弯曲，再连成一条闭合路径
+    const pts = [[s * 1.08, s * 0.02]];
+    const quad = (x0, y0, cx, cy, x1, y1, n = 16) => {
+      for (let i = 1; i <= n; i++) {
+        const u = i / n, iu = 1 - u;
+        pts.push([iu * iu * x0 + 2 * iu * u * cx + u * u * x1, iu * iu * y0 + 2 * iu * u * cy + u * u * y1]);
+      }
+    };
+    quad(s * 1.08, s * 0.02, s * 0.55, -s * 0.44, -s * 0.3, -s * 0.32);          // 背部
+    quad(-s * 0.3, -s * 0.32, -s * 0.68, -s * 0.2, -s * 0.8, -s * 0.075);        // 尾柄上沿
+    quad(-s * 0.8, -s * 0.075, -s * 1.0, -s * 0.13, -s * 1.16, -s * 0.28);       // 上叶前缘 → 上叶尖（约 30° 上扬）
+    quad(-s * 1.16, -s * 0.28, -s * 1.06, -s * 0.14, -s * 0.99, -s * 0.015);     // 上叶后缘 → 中央凹口
+    quad(-s * 0.99, -s * 0.015, -s * 1.06, s * 0.12, -s * 1.16, s * 0.26);       // 下叶前缘 → 下叶尖（约 30° 下扬）
+    quad(-s * 1.16, s * 0.26, -s * 1.0, s * 0.11, -s * 0.8, s * 0.07);           // 下叶后缘 → 尾柄下沿
+    quad(-s * 0.8, s * 0.07, -s * 0.55, s * 0.2, -s * 0.18, s * 0.32);           // 腹后段
+    quad(-s * 0.18, s * 0.32, s * 0.45, s * 0.4, s * 1.08, s * 0.02);            // 腹前段
     ctx.beginPath();
-    ctx.moveTo(s * 1.08, s * 0.02);
-    ctx.quadraticCurveTo(s * 0.55, -s * 0.44, -s * 0.3, -s * 0.32);
-    ctx.quadraticCurveTo(-s * 0.78, -s * 0.24, -s * 1.02, -s * 0.04);
-    ctx.quadraticCurveTo(-s * 0.72, s * 0.2, -s * 0.18, s * 0.32);
-    ctx.quadraticCurveTo(s * 0.45, s * 0.4, s * 1.08, s * 0.02);
+    pts.forEach(([px, py], i) => {
+      const [bx, by] = bendPt(px, py);
+      i === 0 ? ctx.moveTo(bx, by) : ctx.lineTo(bx, by);
+    });
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
-
-    // 尾鳍
-    const flap = Math.sin(t * 0.85 + W.bob) * 0.16;
-    ctx.save();
-    ctx.translate(-s * 1.0, -s * 0.04);
-    ctx.rotate(flap);
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.quadraticCurveTo(-s * 0.26, -s * 0.2, -s * 0.34, -s * 0.3);
-    ctx.quadraticCurveTo(-s * 0.12, -s * 0.07, -s * 0.02, 0);
-    ctx.quadraticCurveTo(-s * 0.12, s * 0.07, -s * 0.34, s * 0.3);
-    ctx.quadraticCurveTo(-s * 0.26, s * 0.2, 0, 0);
-    ctx.fill();
-    ctx.restore();
-
-    // 胸鳍
-    ctx.beginPath();
-    ctx.moveTo(s * 0.42, s * 0.18);
-    ctx.quadraticCurveTo(s * 0.2, s * 0.42, s * 0.06, s * 0.46);
-    ctx.quadraticCurveTo(s * 0.2, s * 0.3, s * 0.3, s * 0.12);
-    ctx.closePath();
-    ctx.fill();
 
     // 腹部浅色 + 斑点
     ctx.globalAlpha = 0.1;

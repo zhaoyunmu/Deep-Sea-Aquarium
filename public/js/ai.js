@@ -4,6 +4,7 @@ import { Jellyfish } from './jellyfish.js';
 import { RARITY_NAMES } from './species.js';
 import { STAGE_NAMES, STAGE_NUT } from './fish.js';
 import { speciesPortrait } from './portrait.js';
+import { executeCommand, extractCommands, commandCheatSheet } from './commands.js';
 import * as UI from './ui.js';
 
 // ---------- 底层 API ----------
@@ -105,6 +106,26 @@ export async function generatePersona(fish) {
   return fish.persona;
 }
 
+
+
+// ---------- 沫沫的玩法指南（本地台词，不需要 AI） ----------
+const GUIDE_TIPS = [
+  '欢迎来到万灵缸！我是沫沫～点一下水面就能撒饲料，鱼儿会游过来抢着吃，吃饱了还会掉出发光尘哦！',
+  '攒够 30 发光尘，就点右上角的「神秘卵」——会有颗卵慢慢沉到沙床上，点它就能孵出新的小家伙！稀有度越高的越难碰到呢。',
+  '想和谁说话就点它！每条鱼都有自己的名字和脾气，你说过的话它们会记在心里～',
+  '鼠标快速划过去，会掀起水流，鱼和海草都会跟着晃；划得够快还能叫醒夜光藻，夜里特别好看！',
+  '双击水面会敲出一圈冲击波，把鱼吓得四散——不过别老欺负它们啦。',
+  '偶尔有漂流瓶摇摇晃晃沉下来，点开有深海的拾句；收进背包之后，还能自己改写字条、再放回海里。',
+  '缸里有昼夜，也有小雨和暴风雨。入夜后生物光会更亮；暴雨天鱼会躲到深处，偶尔还有闪电。要是天边烧起火烧云……记得留意接下来的天气哦！',
+  '左下角那块石板是时钟，上面刻着第几天和时辰；右下角是鲸之石，海的智慧就藏在那里。',
+  '偶尔会有旅人鱼穿缸而过，点它可以聊两句——不过它聊完还要继续赶路的。',
+  '鱼会长大，也会老去。弥留的鱼会变慢、不再进食，第二天钻进沙床长眠……然后会有一颗星星落下来，带着它留下的话。',
+];
+
+// 沫沫（年轻水母）是唯一能拨弄这片海的住民
+export function isYoungJelly(f) {
+  return !!(f && f.isJelly && f.sp && f.sp.id === 'jelly-young');
+}
 // ---------- 聊天面板 ----------
 // 水母的专属对话系统提示（老/小性格不同；老水母按解锁进程逐层透露）
 function jellySystem(j) {
@@ -129,6 +150,10 @@ function jellySystem(j) {
       `性格：${p.personality}。说话方式：${p.style}。`,
       '你眼里只有眼前的鱼儿、发光的尘、漂流瓶、今天的好天气，和这位愿意陪你说话的灵魂。你热情真诚，乐于分享海里的趣事和游玩心得。',
       '规则：始终以沫沫的身份说话；每次回复不超过3句话；活泼、友善、多用感叹号，偶尔冒出泡泡的拟声；不要出戏，不要提到自己是AI或程序。',
+      '【你的特殊能力】你能拨弄这片海。在回复里嵌入指令就会立刻生效，格式：[[cmd: 指令]]，例如 [[cmd: weather rain]]。',
+      `可用指令：${commandCheatSheet()}。`,
+      '当访客请你改变天气、时间、叫来鲸鱼、放漂流瓶、加鱼、改发光尘、或让某条鱼进入弥留时，就嵌入对应指令，再用你自己的口吻告诉他你做了什么。',
+      '指令标记会自动对访客隐藏。只在访客明确要求、或你真心想帮他时使用，不要滥用，也不要解释指令本身。',
     ].join('\n');
   }
   return base;
@@ -185,6 +210,8 @@ export class ChatPanel {
     this.input = el('chat-input');
     this.form = el('chat-form');
     this.personaBtn = el('btn-persona');
+    this.guideBtn = el('btn-guide');
+    this.guideIndex = 0;
 
     this.form.addEventListener('submit', (e) => {
       e.preventDefault();
@@ -195,6 +222,7 @@ export class ChatPanel {
     });
     el('btn-rename').addEventListener('click', () => this.startRename());
     this.personaBtn.addEventListener('click', () => this.regeneratePersona());
+    this.guideBtn.addEventListener('click', () => this.showGuideTip());
   }
 
   openFor(fish, { onSelectPersona } = {}) {
@@ -213,8 +241,9 @@ export class ChatPanel {
     this.drawAvatar(fish);
     this.log.replaceChildren();
     this.panel.classList.remove('hidden');
-    // 生成档案按钮：对水母/路过鱼隐藏
+    // 生成档案按钮：保持现状不动（它被刻意隐藏着，不要用 class 去改它的显隐）
     this.personaBtn.style.display = (fish.passer || fish.isJelly) ? 'none' : '';
+    this.guideBtn.classList.toggle('hidden', !isYoungJelly(fish));
     // 离线时显示"不会说话"的小字提示
     el('chat-offline-note').classList.toggle('hidden', !!AI.online);
     // 重放历史聊天：关掉再打开，记忆还在
@@ -303,6 +332,15 @@ export class ChatPanel {
     if (!m) return [];
     const parsed = JSON.parse(m[0]);
     return (parsed.suggestions || []).filter((s) => typeof s === 'string' && s.trim()).slice(0, 3);
+  }
+
+  // 沫沫的玩法指南：一次讲一条，讲完从头再来（纯本地，不消耗 token）
+  showGuideTip() {
+    if (!this.fish) return;
+    const tip = GUIDE_TIPS[this.guideIndex % GUIDE_TIPS.length];
+    this.push('fish', `沫沫：${tip}`);
+    this.guideIndex++;
+    this.guideBtn.textContent = this.guideIndex % GUIDE_TIPS.length === 0 ? '📖 从头再讲一遍' : '📖 下一招';
   }
 
   // 成长状态：阶段 / 营养条 / 年龄与寿命
@@ -413,6 +451,21 @@ export class ChatPanel {
   async send(text) {
     const fish = this.fish;
     if (!fish) return;
+
+    // 开发者指令：只有沫沫能拨弄这片海（本地执行，零 token）
+    if (text.startsWith('/') && isYoungJelly(fish)) {
+      this.push('me', text);
+      const res = executeCommand(text, window.__tank);
+      if (res) {
+        this.push('sys', `${res.ok ? '⚙️' : '⚠️'} ${res.msg}`);
+        if (res.ok) {
+          const quips = ['好嘞～', '看我的！', '嘿嘿，变！', '交给我吧～', '收到收到！'];
+          this.push('fish', `沫沫：${quips[(Math.random() * quips.length) | 0]}`);
+        }
+        return;
+      }
+    }
+
     this.push('me', text);
     const typing = this.showTyping();
     this.busy = true;
@@ -454,9 +507,15 @@ export class ChatPanel {
     try {
       fish.chatLog.push({ role: 'user', content: text });
       const reply = await AI.chat(personaSystem(fish), fish.chatLog.slice(-12), 1.15, 300);
-      fish.chatLog.push({ role: 'assistant', content: reply });
+      // 沫沫可能用 [[cmd: …]] 拨弄世界：先执行，再把标记从文本里去掉
+      const { clean, cmds } = extractCommands(reply);
+      for (const c of cmds) {
+        const res = executeCommand(c, window.__tank);
+        if (res) this.push('sys', `${res.ok ? '⚙️' : '⚠️'} ${res.msg}`);
+      }
+      fish.chatLog.push({ role: 'assistant', content: clean });
       typing.remove();
-      this.push('fish', reply);
+      this.push('fish', clean);
     } catch (err) {
       typing.remove();
       this.push('sys', `（它似乎没听见：${err.message}）`);

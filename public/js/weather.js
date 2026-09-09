@@ -1,12 +1,12 @@
 // ============ 昼夜更替 + 天气事件（小雨 / 暴风雨 / 闪电） ============
 import { TAU, rand, clamp } from './util.js';
 
-const CYCLE = 280; // 一昼夜的秒数
+export const CYCLE = 240; // 一昼夜的秒数（24 小时 × 10 秒/小时）
 
 export class Weather {
   constructor(w, h) {
     this.w = w; this.h = h;
-    this.t0 = -CYCLE * 0.1;       // 从上午开始
+    this.t0 = CYCLE * 0.1;        // 从上午 8 点左右开始
     this.state = 'clear';          // clear | rain | storm
     this.stateTimer = rand(35, 70);
     this.rainI = 0;                // 雨强度 0..1（平滑过渡）
@@ -28,6 +28,10 @@ export class Weather {
     this.fireDawn = false;
     this.fireDusk = false;
     this.prevPhase = null;
+    // 时钟日历：24 小时制，每小时 10 秒；dayCount 从 1 开始
+    this.dayCount = 1;
+    this.lastHour = -1;
+    this.onNewDay = null;
     this.biasDay = 0;              // 白天降雨概率偏置
     this.biasNight = 0;            // 夜晚降雨概率偏置
     this.pendingDayBias = 0;       // 黄昏火烧云留给第二天白天的偏置
@@ -38,6 +42,17 @@ export class Weather {
 
   phase(t) {
     return ((((t + this.t0) % CYCLE) + CYCLE) % CYCLE) / CYCLE;
+  }
+
+  // 当前小时（0-23）：相位 0 = 日出 = 6:00
+  hourAt(t) {
+    return Math.floor(((this.phase(t) * 24) + 6) % 24);
+  }
+
+  // 当前小时内的进度（0..1）：给时钟的进度环用
+  hourFrac(t) {
+    const hf = ((this.phase(t) * 24) + 6) % 24;
+    return hf - Math.floor(hf);
   }
 
   daylightAt(t) {
@@ -54,6 +69,14 @@ export class Weather {
       else if (this.prevPhase < 0.5 && ph >= 0.5) this._onDusk();
     }
     this.prevPhase = ph;
+
+    // 时钟：跨过午夜（23 → 0）就是新的一天
+    const hour = this.hourAt(t);
+    if (this.lastHour >= 0 && hour < this.lastHour) {
+      this.dayCount++;
+      if (this.onNewDay) this.onNewDay(this.dayCount);
+    }
+    this.lastHour = hour;
 
     // --- 火烧云强度：只在黎明/黄昏的窗口里燃起，随后熄灭 ---
     let fireTarget = 0;

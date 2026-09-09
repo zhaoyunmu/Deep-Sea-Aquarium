@@ -4,6 +4,7 @@ import { el } from './util.js';
 import { speciesPortrait } from './portrait.js';
 
 const KEY = 'wanling.v1';
+export const STORAGE_KEY = KEY; // 供存档系统使用
 
 export class Collection {
   constructor() {
