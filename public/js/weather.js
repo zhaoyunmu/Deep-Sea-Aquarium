@@ -27,6 +27,8 @@ export class Weather {
     this.fireX = 0.5;              // 日头在天边的位置
     this.fireDawn = false;
     this.fireDusk = false;
+    this.forceFireDawn = false;   // 指令强制：下一个黎明必是火烧云
+    this.forceFireDusk = false;   // 指令强制：下一个黄昏必是火烧云
     this.prevPhase = null;
     // 时钟日历：24 小时制，每小时 10 秒；dayCount 从 1 开始
     this.dayCount = 1;
@@ -154,8 +156,10 @@ export class Weather {
     this.pendingDayBias = 0;
     this.biasNight = 0;
     this.fireDusk = false;
-    // 晴天黎明有概率烧起火烧云 → 白天大概率下雨，晚上大概率不下
-    if (this.state === 'clear' && Math.random() < 0.45) {
+    // 晴天黎明有概率烧起火烧云 → 白天大概率下雨，晚上大概率不下；指令可强制下一个黎明为火烧云
+    const wantFire = this.forceFireDawn;
+    this.forceFireDawn = false;
+    if (wantFire || (this.state === 'clear' && Math.random() < 0.45)) {
       this.fireDawn = true;
       this.biasDay = clamp(this.biasDay + 0.3, -0.5, 0.5);
       this.biasNight = -0.25;
@@ -167,13 +171,29 @@ export class Weather {
     // 白天结束，白天的偏置清零
     this.biasDay = 0;
     this.fireDawn = false;
-    // 晴天黄昏有概率烧起火烧云 → 夜里雨概率升，第二天白天雨概率降
-    if (this.state === 'clear' && Math.random() < 0.45) {
+    // 晴天黄昏有概率烧起火烧云 → 夜里雨概率升，第二天白天雨概率降；指令可强制下一个黄昏为火烧云
+    const wantFire = this.forceFireDusk;
+    this.forceFireDusk = false;
+    if (wantFire || (this.state === 'clear' && Math.random() < 0.45)) {
       this.fireDusk = true;
       this.biasNight = clamp(this.biasNight + 0.3, -0.5, 0.5);
       this.pendingDayBias = -0.25;
       if (this.onFireCloud) this.onFireCloud('dusk');
     }
+  }
+
+  // 指令强制：让下一个黎明/黄昏必是火烧云
+  forceFire(kind) {
+    if (kind === 'dawn') {
+      this.forceFireDawn = true;
+      this.forceFireDusk = false;
+    } else if (kind === 'dusk') {
+      this.forceFireDusk = true;
+      this.forceFireDawn = false;
+    } else {
+      return false;
+    }
+    return true;
   }
 
   _pick(t) {
@@ -189,6 +209,11 @@ export class Weather {
 
   env(t) {
     const daylight = this.daylightAt(t);
+    // 连续太阳高度角：0=日出 1=正午 0=日落 -1=午夜（可正可负，供天空/太阳/月亮连续用）
+    const sunElev = Math.sin(this.phase(t) * TAU);
+    // 曝光平滑因子：把太阳高度映射到 0(夜)~1(昼)，并做 smoothstep 让过零点更柔
+    const e = clamp((sunElev + 0.3) / 0.7, 0, 1);
+    const exposure = e * e * (3 - 2 * e);
     return {
       daylight,
       night: 1 - daylight,
@@ -198,6 +223,9 @@ export class Weather {
       glow: 1 + (1 - daylight) * 0.85,
       fire: this.fire,
       fireX: this.fireX,
+      sunElev,
+      exposure,
+      phase: this.phase(t),
     };
   }
 

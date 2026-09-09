@@ -86,6 +86,17 @@ export const COMMANDS = [
     },
   },
   {
+    name: 'fire', alias: ['火烧云'], usage: '/fire <黎明|黄昏>', desc: '让下一个黎明或黄昏必为火烧云（/fire dawn / fire dusk）',
+    run(arg, T) {
+      const k = (arg || '').trim().toLowerCase();
+      const kind = k === '黎明' || k === 'dawn' ? 'dawn' : k === '黄昏' || k === 'dusk' ? 'dusk' : null;
+      if (!kind) return { ok: false, msg: '用法：/fire 黎明|dawn 或 /fire 黄昏|dusk（让下一个黎明/黄昏为火烧云）' };
+      const w = T.weather;
+      if (!w.forceFire(kind)) return { ok: false, msg: '设置失败' };
+      return { ok: true, msg: `已安排：下一个${kind === 'dawn' ? '黎明' : '黄昏'}将为火烧云` };
+    },
+  },
+  {
     name: 'time', alias: ['时间'], usage: '/time [14 | 2pm | 14:30 | 黄昏 | +2 | -1]', desc: '跳到指定时辰（不带参数=报当前时间）；/time day 5 改总天数',
     run(arg, T) {
       const w = T.weather;

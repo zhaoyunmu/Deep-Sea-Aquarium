@@ -1,5 +1,5 @@
 // ============ 海底世界：水色 / 光柱 / 海雪 / 沙床海草 / 气泡 / 鲸影 ============
-import { TAU, rand, SCALE } from './util.js';
+import { TAU, rand, SCALE, clamp } from './util.js';
 
 // 白天/夜晚的水色渐变（stop, r, g, b）
 const DAY_STOPS = [
@@ -140,9 +140,11 @@ export class World {
     const { w, h } = this;
     const dl = env.daylight, night = env.night, rain = env.rain;
     const fire = env.fire || 0;
+    const exposure = env.exposure ?? dl;
 
-    // 水色：昼 / 夜渐变插值，雨天再压暗混灰
+    // 水色：昼 / 夜渐变插值，雨天再压暗混灰（火烧云用原有画面，此处不再额外染橙）
     if (!this._bgGrad) this._bgGrad = { grad: null, key: '' };
+    const sunElev = env.sunElev || 0;
     const key = [dl.toFixed(2), rain.toFixed(2)].join('|');
     if (this._bgGrad.key !== key) {
       const g = ctx.createLinearGradient(0, 0, 0, h);
@@ -153,6 +155,10 @@ export class World {
         let r = dr + (nr - dr) * night;
         let gg = dg + (ng - dg) * night;
         let b = db + (nb - db) * night;
+        // 黄昏/黎明：海面/天边透一层柔和的暗紫（只影响上部，深处保持原本颜色，半明半暗时最明显）
+        const purpleK = (3.5 * dl * (1 - dl)) * 0.42 * clamp(1 - stop / 0.6, 0, 1);
+        const purpleC = [110, 66, 148];
+        r += (purpleC[0] - r) * purpleK; gg += (purpleC[1] - gg) * purpleK; b += (purpleC[2] - b) * purpleK;
         const f = rain * 0.38;
         r += (murky[0] - r) * f; gg += (murky[1] - gg) * f; b += (murky[2] - b) * f;
         g.addColorStop(stop, `rgb(${r | 0},${gg | 0},${b | 0})`);
@@ -195,24 +201,10 @@ export class World {
       }
     }
 
-    // 夜晚：月光透下来的柔斑
-    if (night > 0.05 && rain < 0.6) {
-      ctx.save();
-      ctx.globalCompositeOperation = 'lighter';
-      const mx = w * 0.72, my = -30;
-      const mg = ctx.createRadialGradient(mx, my, 0, mx, my, 220);
-      const ma = 0.13 * night * (1 - rain * 0.7);
-      mg.addColorStop(0, `rgba(185,212,255,${ma.toFixed(3)})`);
-      mg.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = mg;
-      ctx.fillRect(mx - 220, my - 220, 440, 440);
-      ctx.restore();
-    }
-
     // 体积光柱：夜里变成暗淡月光柱，雨天被云遮蔽，火烧云时染成橙红
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
-    const rayDim = (0.26 + 0.74 * dl) * (1 - 0.78 * rain) * (1 + fire * 0.5);
+    const rayDim = (0.26 + 0.74 * exposure) * (1 - 0.78 * rain) * (1 + fire * 0.5);
     for (let i = 0; i < 6; i++) {
       const x = ((i + 0.5) / 6) * w + Math.sin(t * 0.06 + i * 1.7) * 46;
       const tilt = 0.2 + Math.sin(t * 0.045 + i) * 0.07;
@@ -234,7 +226,7 @@ export class World {
       ctx.fill();
     }
     // 水面碎光（焦散）——夜里和雨天基本消失，火烧云时染成金色
-    const causA = (0.15 + 0.85 * dl) * (1 - 0.85 * rain);
+    const causA = (0.15 + 0.85 * exposure) * (1 - 0.85 * rain);
     if (causA > 0.02) {
       for (let k = 0; k < 3; k++) {
         ctx.beginPath();
