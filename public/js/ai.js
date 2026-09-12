@@ -67,13 +67,17 @@ const OFFLINE_REPLIES = [
 ];
 
 export function fallbackPersona(fish) {
-  const seed = Math.floor(Math.random() * 997);
   // 玩家亲手起的名字永远保留
   const keepName = fish.persona?.playerNamed ? fish.persona.name : null;
+  const name = keepName || FALLBACK_NAMES[(Math.random() * FALLBACK_NAMES.length) | 0];
+  // 性格与说话习惯由「名字 + 物种」共同决定：同名同种，性格就相同
+  let h = 7;
+  for (const ch of `${name}·${fish.sp.id}`) h = ((h * 31 + ch.charCodeAt(0)) | 0);
+  h = Math.abs(h);
   fish.persona = {
-    name: keepName || FALLBACK_NAMES[seed % FALLBACK_NAMES.length],
-    personality: FALLBACK_PERSONAS[(seed >> 2) % FALLBACK_PERSONAS.length],
-    style: FALLBACK_STYLES[(seed >> 4) % FALLBACK_STYLES.length],
+    name,
+    personality: FALLBACK_PERSONAS[h % FALLBACK_PERSONAS.length],
+    style: FALLBACK_STYLES[(h >> 3) % FALLBACK_STYLES.length],
     playerNamed: !!keepName,
   };
   fish.chatLog = [];
@@ -82,20 +86,25 @@ export function fallbackPersona(fish) {
 
 // ---------- AI 生成档案 ----------
 export async function generatePersona(fish) {
+  // 玩家起过的名字不可被覆盖；改名后性格与说话习惯要随名字与物种重新推定
+  const keepName = fish.persona?.playerNamed ? fish.persona.name : null;
   const system = [
-    '你是深海生物档案馆的登记官，负责为刚孵化的海洋生物生成档案。',
+    '你是深海生物档案馆的登记官，负责为海洋生物写档案。',
     '只输出一个 JSON 对象，禁止输出任何多余文字：',
     '{"name":"两到四个字的可爱或奇特中文名","personality":"一句话性格，20字以内","style":"说话习惯，15字以内"}',
     '名字要符合物种气质，性格要鲜明、有记忆点，避免俗套。',
   ].join('\n');
-  const user = `物种：${fish.sp.name}（${RARITY_NAMES[fish.sp.rarity]}）。简介：${fish.sp.desc} 它刚刚从一颗${fish.sp.rarity >= 3 ? '微微发烫的' : '幽幽发光的'}卵中孵化。`;
+  const user = [
+    `物种：${fish.sp.name}（${RARITY_NAMES[fish.sp.rarity]}）。简介：${fish.sp.desc}`,
+    keepName
+      ? `它已有名字：「${keepName}」（主人亲手起的，name 字段必须原样输出它）。性格与说话习惯要和这个名字相衬。`
+      : `它刚刚从一颗${fish.sp.rarity >= 3 ? '微微发烫的' : '幽幽发光的'}卵中孵化，请为它起名。`,
+  ].join('\n');
   const reply = await AI.chat(system, [{ role: 'user', content: user }], 1.15, 200);
   const m = reply.match(/\{[\s\S]*\}/);
   if (!m) throw new Error('档案格式异常');
   const p = JSON.parse(m[0]);
   if (!p.name || !p.personality) throw new Error('档案不完整');
-  // 玩家起过的名字不可被 AI 覆盖
-  const keepName = fish.persona?.playerNamed ? fish.persona.name : null;
   fish.persona = {
     name: keepName || String(p.name).slice(0, 8),
     personality: String(p.personality).slice(0, 40),
@@ -116,8 +125,10 @@ const GUIDE_TIPS = [
   '鼠标快速划过去，会掀起水流，鱼和海草都会跟着晃；划得够快还能叫醒夜光藻，夜里特别好看！',
   '双击水面会敲出一圈冲击波，把鱼吓得四散——不过别老欺负它们啦。',
   '偶尔有漂流瓶摇摇晃晃沉下来，点开有深海的拾句；收进背包之后，还能自己改写字条、再放回海里。',
+  '海里偶尔会沉下一只音乐盒——它一奏乐，平日背景的海声就会让位。点它可以收回背包，鱼群也爱围着它听歌；把它从背包拖回海里，曲子又会响起来。',
   '缸里有昼夜，也有小雨和暴风雨。入夜后生物光会更亮；暴雨天鱼会躲到深处，偶尔还有闪电。要是天边烧起火烧云……记得留意接下来的天气哦！',
   '左下角那块石板是时钟，上面刻着第几天和时辰；右下角是鲸之石，海的智慧就藏在那里。',
+  '想要赋予这片海洋智慧吗？右下角的「鲸之石」会告诉你答案……去点点看它吧！',
   '偶尔会有旅人鱼穿缸而过，点它可以聊两句——不过它聊完还要继续赶路的。',
   '鱼会长大，也会老去。弥留的鱼会变慢、不再进食，第二天钻进沙床长眠……然后会有一颗星星落下来，带着它留下的话。',
 ];
@@ -209,9 +220,9 @@ export class ChatPanel {
     this.avatar = el('chat-avatar');
     this.input = el('chat-input');
     this.form = el('chat-form');
-    this.personaBtn = el('btn-persona');
     this.guideBtn = el('btn-guide');
     this.guideIndex = 0;
+    this.quickCache = new Map(); // 鱼 → { phrases, at, logLen }：同一条鱼不重复烧 token
 
     this.form.addEventListener('submit', (e) => {
       e.preventDefault();
@@ -221,13 +232,11 @@ export class ChatPanel {
       this.send(text);
     });
     el('btn-rename').addEventListener('click', () => this.startRename());
-    this.personaBtn.addEventListener('click', () => this.regeneratePersona());
     this.guideBtn.addEventListener('click', () => this.showGuideTip());
   }
 
-  openFor(fish, { onSelectPersona } = {}) {
+  openFor(fish) {
     this.fish = fish;
-    this.onSelectPersona = onSelectPersona;
     // 离线模式下给没名字的缸内住民一个本地档案（路过鱼保持无名）
     if (!fish.persona && !AI.online && !fish.passer) fallbackPersona(fish);
     this.nameEl.textContent = fish.persona ? fish.persona.name : '未登记的小家伙';
@@ -241,8 +250,6 @@ export class ChatPanel {
     this.drawAvatar(fish);
     this.log.replaceChildren();
     this.panel.classList.remove('hidden');
-    // 生成档案按钮：保持现状不动（它被刻意隐藏着，不要用 class 去改它的显隐）
-    this.personaBtn.style.display = (fish.passer || fish.isJelly) ? 'none' : '';
     this.guideBtn.classList.toggle('hidden', !isYoungJelly(fish));
     // 离线时显示"不会说话"的小字提示
     el('chat-offline-note').classList.toggle('hidden', !!AI.online);
@@ -258,7 +265,7 @@ export class ChatPanel {
       if (!AI.online) {
         // 离线：鱼咕噜，水母只静静发光（无法真正交流）
         hello = fish.isJelly
-          ? (fish.sp.id === 'jelly-old' ? '（巨大的水母安静地悬浮着，光芒一明一暗……似乎藏着许多话，却无从说起。）' : '（小水母蹦跶着绕了你一圈，但因为没有 AI，它只能吐泡泡。）')
+          ? (fish.sp.id === 'jelly-old' ? '（巨大的水母安静地悬浮着，光芒一明一暗……似乎藏着许多话，却无从说起。）' : '（小水母蹦跶着绕了你一圈——鲸之石还没亮，它只能吐泡泡。）')
           : OFFLINE_REPLIES[(Math.random() * OFFLINE_REPLIES.length) | 0];
       } else if (fish.isJelly) {
         hello = fish.sp.id === 'jelly-old'
@@ -267,9 +274,9 @@ export class ChatPanel {
       } else if (fish.persona) {
         hello = `${fish.persona.name}：${fish.persona.personality}——你在叫我吗？`;
       } else if (fish.passer) {
-        hello = '（一位路过的旅人还没开口。AI 在线时它才有化名，能聊上几句。）';
+        hello = '（一位路过的旅人还没开口。等右下角的鲸之石亮起，它才有化名，能聊上几句。）';
       } else {
-        hello = '（它似乎还没有名字，试试上面的 ✏️ 或下面的「生成档案」）';
+        hello = '（它似乎还没有名字，点上面的 ✏️ 给它起一个吧——性格会随名字落定）';
       }
       this.push('fish', hello);
     }
@@ -306,6 +313,11 @@ export class ChatPanel {
 
   async loadQuickPhrases(fish) {
     if (!AI.online || !fish) return null;
+    // 缓存命中：同一条鱼、没聊出新的对话（chatLog 长度没变）、10 分钟内 → 直接复用
+    const cached = this.quickCache.get(fish);
+    if (cached && cached.logLen === fish.chatLog.length && Date.now() - cached.at < 10 * 60 * 1000) {
+      return cached.phrases;
+    }
     const t = performance.now() / 1000;
     let envDesc = '海里很平静';
     try {
@@ -331,7 +343,9 @@ export class ChatPanel {
     const m = reply.match(/\{[\s\S]*\}/);
     if (!m) return [];
     const parsed = JSON.parse(m[0]);
-    return (parsed.suggestions || []).filter((s) => typeof s === 'string' && s.trim()).slice(0, 3);
+    const phrases = (parsed.suggestions || []).filter((s) => typeof s === 'string' && s.trim()).slice(0, 3);
+    this.quickCache.set(fish, { phrases, at: Date.now(), logLen: fish.chatLog.length });
+    return phrases;
   }
 
   // 沫沫的玩法指南：一次讲一条，讲完从头再来（纯本地，不消耗 token）
@@ -371,13 +385,13 @@ export class ChatPanel {
   updateProfile(fish) {
     const box = el('chat-profile');
     if (!fish || !fish.persona || (!fish.persona.personality && !fish.persona.style)) {
-      box.innerHTML = '<p class="profile-empty">还没有档案 — 点 ✏️ 给它起名，或点下方「✨ 生成档案」让登记官写一份</p>';
+      box.innerHTML = '<p class="profile-empty">还没有档案 — 点上面的 ✏️ 起个名字，性格与说话习惯会随名字与物种落定</p>';
       return;
     }
     const rows = [];
     if (fish.persona.personality) rows.push(`<div class="profile-row"><span class="profile-key">性格</span><span>${fish.persona.personality}</span></div>`);
     if (fish.persona.style) rows.push(`<div class="profile-row"><span class="profile-key">习惯</span><span>${fish.persona.style}</span></div>`);
-    if (fish.persona.playerNamed) rows.push('<div class="profile-row named"><span class="profile-key">命名</span><span>这个名字是你起的，AI 不会改</span></div>');
+    if (fish.persona.playerNamed) rows.push('<div class="profile-row named"><span class="profile-key">命名</span><span>这个名字是你起的，会一直保留</span></div>');
     box.innerHTML = rows.join('');
   }
 
@@ -413,7 +427,7 @@ export class ChatPanel {
         this.updateProfile(fish);
         window.__tank?.saveFish?.();
         UI.toast(`📝 它现在叫「${name}」啦`);
-        if (this.onSelectPersona) this.onSelectPersona(fish);
+        this.refreshPersona(fish); // 性格与说话习惯随新名字与物种重新落定
       }
       input.replaceWith(this.nameEl);
     };
@@ -422,6 +436,22 @@ export class ChatPanel {
       if (e.key === 'Escape') { done = true; input.replaceWith(this.nameEl); }
     });
     input.addEventListener('blur', commit);
+  }
+
+  // 性格与说话习惯由「名字 + 物种」决定：鲸之石亮起时由登记官按新名字重写，离线时本地按名字推定
+  async refreshPersona(fish) {
+    try {
+      if (AI.online) await generatePersona(fish);
+      else fallbackPersona(fish);
+    } catch {
+      fallbackPersona(fish);
+    }
+    if (this.fish === fish) {
+      this.nameEl.textContent = fish.persona.name; // 名字保持玩家起的
+      this.updateProfile(fish);
+    }
+    window.__tank?.saveFish?.();
+    UI.toast(`✨ 「${fish.persona.name}」的性格落定了：${fish.persona.personality}`);
   }
 
   close() {
@@ -478,15 +508,13 @@ export class ChatPanel {
 
     if (!fish.persona) {
       try {
-        await this.regeneratePersona(true);
+        await generatePersona(fish);
       } catch { fallbackPersona(fish); }
-      if (fish.persona) {
-        // persona 可能刚生成，补一个名字气泡
-        typing.remove();
-        this.push('sys', `档案生成完毕，它叫「${fish.persona.name}」`);
-        this.nameEl.textContent = fish.persona.name;
-        if (this.onSelectPersona) this.onSelectPersona(fish);
-      } else typing.remove();
+      // persona 可能刚生成，补一个名字气泡
+      typing.remove();
+      this.push('sys', `档案落定，它叫「${fish.persona.name}」`);
+      this.nameEl.textContent = fish.persona.name;
+      this.updateProfile(fish);
     }
 
     if (!AI.online) {
@@ -495,7 +523,7 @@ export class ChatPanel {
       if (fish.isJelly) {
         this.push('fish', fish.sp.id === 'jelly-old'
           ? '……（水母的触手轻轻晃动，光芒一明一暗，像在无声地回应着什么，却终未开口。）'
-          : '咕噜噜～（小水母吐了个泡泡蹭了蹭你，但因为还没有 AI，它只能吐泡泡啦。）');
+          : '咕噜噜～（小水母吐了个泡泡蹭了蹭你——鲸之石还没亮，它只能说这么多啦。）');
       } else {
         const reply = OFFLINE_REPLIES[(Math.random() * OFFLINE_REPLIES.length) | 0];
         this.push('fish', reply);
@@ -517,39 +545,13 @@ export class ChatPanel {
       typing.remove();
       this.push('fish', clean);
     } catch (err) {
+      // 这句话没得到回应，从记忆里撤回，免得下次对话看到一句悬空的话
+      const last = fish.chatLog[fish.chatLog.length - 1];
+      if (last && last.role === 'user' && last.content === text) fish.chatLog.pop();
       typing.remove();
       this.push('sys', `（它似乎没听见：${err.message}）`);
     }
     this.busy = false;
-  }
-
-  async regeneratePersona(silent = false) {
-    const fish = this.fish;
-    if (!fish) return;
-    if (!AI.online) {
-      if (!silent) this.push('sys', 'AI 未接入，暂时无法生成档案');
-      return;
-    }
-    if (!silent) {
-      this.personaBtn.textContent = '✍️ 登记中…';
-      this.personaBtn.disabled = true;
-    }
-    try {
-      const p = await generatePersona(fish);
-      this.nameEl.textContent = p.name;
-      this.updateProfile(fish);
-      if (!silent) {
-        this.push('sys', p.playerNamed
-          ? `档案重新写好了——名字保持你起的「${p.name}」`
-          : `档案更新：它现在叫「${p.name}」`);
-        this.push('fish', `${p.name}：嗯——这个名字，我喜欢。`);
-      }
-      if (this.onSelectPersona) this.onSelectPersona(fish);
-    } catch (err) {
-      if (!silent) this.push('sys', `登记失败：${err.message}`);
-    }
-    this.personaBtn.textContent = '✨ 生成档案';
-    this.personaBtn.disabled = false;
   }
 
   // 小头像：按物种颜色画一条 mini 鱼

@@ -106,8 +106,7 @@
       <input id="chat-input" type="text" maxlength="120" placeholder="和它说点什么…" autocomplete="off">
       <button type="submit" id="chat-send">➤</button>
     </form>
-    <button id="btn-persona" class="persona-btn hidden" title="让 AI 为它生成/重写一份档案">✨ 生成档案</button>
-    <button id="btn-guide" class="persona-btn hidden" title="让沫沫带你熟悉这片海（不需要 AI）">📖 玩法指南</button>
+    <button id="btn-guide" class="persona-btn hidden" title="让沫沫带你熟悉这片海">📖 玩法指南</button>
     <p id="chat-offline-note" class="chat-offline-note hidden">它似乎不会说话，除非获得深海（deep sea）的智慧……</p>
   </aside>
 
@@ -128,6 +127,7 @@
         <li><b>路过的鱼</b> — 偶尔有旅人鱼游过（下雨天更多），点击它聊两句——它聊完还要赶路。</li>
         <li><b>图鉴</b> — 右上角「图鉴」，查看你收集到的各种深海生物。</li>
         <li><b>昼夜天气</b> — 海里有昼夜交替和天气变化。入夜后生物光更亮，暴雨天鱼会躲到深处，偶尔有闪电落下。</li>
+        <li><b>鲸之石</b> — 想要赋予这片海洋智慧？右下角的「鲸之石」会告诉你答案……点点看它。</li>
       </ul>
       <button class="primary" data-close="help-overlay">明白了，潜水去</button>
     </div>
@@ -181,6 +181,17 @@
     </div>
   </div>
 
+  <!-- 游戏内确认框 -->
+  <div id="confirm-overlay" class="overlay hidden">
+    <div class="overlay-card">
+      <p id="confirm-text">…</p>
+      <div class="confirm-actions">
+        <button id="confirm-cancel">先不了</button>
+        <button id="confirm-ok" class="primary">确定</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 开场 -->
   <div id="splash" class="overlay">
     <div class="splash-inner">
@@ -188,7 +199,7 @@
       <h1 class="splash-title">万灵缸</h1>
       <p class="splash-sub">一片会呼吸的深海，一群有名字的灵魂。</p>
       <button id="btn-dive" class="primary big">潜 入 水 面</button>
-      <p class="splash-hint">建议全屏 · 声音无需 · 心情随意</p>
+      <p class="splash-hint">建议全屏 · 心情随意</p>
     </div>
   </div>
 
@@ -224,6 +235,11 @@
           <span class="settings-label">🐟 显示鱼名</span>
           <span class="settings-toggle"><input type="checkbox" id="show-names-check"></span>
         </label>
+      </div>
+      <div class="settings-actions">
+        <button id="btn-export" class="exit-btn" title="把整缸进度导出成一个文件——可以备份，也可以发给朋友">📤 导出存档</button>
+        <button id="btn-import" class="exit-btn" title="从存档文件恢复整缸进度">📥 导入存档</button>
+        <input type="file" id="import-file" accept=".json,application/json" class="hidden">
       </div>
       <button class="primary" data-close="panel-settings-overlay">完成</button>
     </div>

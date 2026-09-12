@@ -285,6 +285,11 @@ export class Fish {
     // 年龄随游戏天数增长；大限将至 → 弥留，一天后钻沙（受时间缩放控制：标题时 ts=0 则不长大）
     const gdt = dt * ts;
     this.ageDays += gdt / DAY_SECONDS;
+    // 阶段推进：年龄到了 + 营养吃满，才长大一号（运行中即时生效，不必等刷新）
+    if (this.stage < 2 && this.ageDays >= STAGE_AGES[this.stage] && this.nutrition >= STAGE_NUT[this.stage]) {
+      this.stage++;
+      this.justGrew = true;
+    }
     if (!this.passer) {
       if (!this.dying && this.ageDays >= this.lifespanActual) {
         this.dying = true;

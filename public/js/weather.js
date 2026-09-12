@@ -199,8 +199,9 @@ export class Weather {
   _pick(t) {
     const isDay = this.daylightAt(t) > 0.45;
     const bias = isDay ? this.biasDay : this.biasNight;
-    const rainP = clamp(0.6 + bias, 0.05, 0.92);
-    const stormP = clamp(0.2 + bias * 0.4, 0.05, 0.6);
+    // 晴是常态：基础降雨 0.4、暴雨 0.12；火烧云的偏置（±0.3 / -0.25）让预言对比更鲜明
+    const rainP = clamp(0.4 + bias, 0.05, 0.85);
+    const stormP = clamp(0.12 + bias * 0.4, 0.05, 0.6);
     const r = Math.random();
     this.state = r < rainP ? 'rain' : r < rainP + stormP ? 'storm' : 'clear';
     this.stateTimer = this.state === 'clear' ? rand(55, 120) : rand(28, 65);

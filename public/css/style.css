@@ -525,3 +525,30 @@ canvas#tank { position: fixed; inset: 0; display: block; cursor: crosshair; }
 }
 .settings-row:has(input[type="range"]) { padding: 14px 16px; }
 #panel-settings-overlay .overlay-card .primary { display: block; width: 100%; text-align: center; }
+
+/* ---------- 游戏内确认框（代替 window.confirm） ---------- */
+#confirm-overlay .overlay-card p {
+  white-space: pre-line; line-height: 1.9;
+  font-size: calc(15px * var(--ui)); color: var(--ink-dim);
+  margin-bottom: 20px;
+}
+.confirm-actions { display: flex; gap: 12px; justify-content: flex-end; }
+.confirm-actions button {
+  padding: 9px 20px; border-radius: 11px; cursor: pointer;
+  font-size: calc(14.5px * var(--ui)); font-family: inherit;
+  color: #cfe6f2; background: rgba(10,30,48,.6);
+  border: 1px solid rgba(140,180,210,.28);
+  transition: border-color .2s, background .2s;
+}
+.confirm-actions button:hover { border-color: rgba(160,240,255,.5); background: rgba(111,227,255,.08); }
+
+/* ---------- 存档导出 / 导入 ---------- */
+.settings-actions { display: flex; gap: 10px; margin-bottom: 18px; }
+.settings-actions .exit-btn { flex: 1; position: static; }
+
+/* ---------- 背包里的音乐盒封面 ---------- */
+.bp-ico.bp-cover {
+  width: 30px; height: 30px; border-radius: 7px;
+  object-fit: cover; display: block;
+  border: 1px solid rgba(255,225,170,.4);
+}

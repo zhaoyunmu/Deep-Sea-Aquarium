@@ -7,6 +7,8 @@ let masterGain = null;   // 音效总音量
 let musicGain = null;    // 音乐/氛围总音量
 let ambienceNodes = null;// 氛围音景的节点（start/stop 复用）
 let bgAudio = null;      // 背景音乐 <audio>（若有文件）
+let boxAudio = null;     // 音乐盒 <audio>（盒子在海里时接管音乐）
+let activeBox = null;    // 正在奏乐的盒子曲目 { name, src, cover } | null
 let unlocked = false;
 
 // ---- 开关状态（存 localStorage，与「显示鱼名」开关一致）----
@@ -33,6 +35,7 @@ export function setMusicVolume(v) {
   try { localStorage.setItem(MUSIC_VOL_KEY, String(prefs.musicVolume)); } catch {}
   // 应用到当前正在播放的声音源
   if (bgAudio) bgAudio.volume = prefs.musicVolume;
+  if (boxAudio) boxAudio.volume = prefs.musicVolume;
   if (musicGain) musicGain.gain.value = prefs.musicVolume * 0.5;
 }
 function clamp01(v) { return Math.max(0, Math.min(1, isFinite(v) ? v : 0.7)); }
@@ -86,9 +89,10 @@ if (typeof window !== 'undefined') {
 }
 
 // ---- 合成一个渐变包络缓存的振荡器音 ----
-function tone({ freq = 440, endFreq = freq, dur = 0.3, type = 'sine', gain = 0.3, attack = 0.01, delay = 0 }) {
+// music=true 时归音乐总线（受音乐开关与音量滑杆控制），否则归音效总线
+function tone({ freq = 440, endFreq = freq, dur = 0.3, type = 'sine', gain = 0.3, attack = 0.01, delay = 0, music = false }) {
   const c = ensureRunning();
-  if (!c || !prefs.sfx) return;
+  if (!c || (music ? !prefs.music : !prefs.sfx)) return;
   const t0 = c.currentTime + delay;
   const o = c.createOscillator(), g = c.createGain();
   o.type = type;
@@ -97,7 +101,7 @@ function tone({ freq = 440, endFreq = freq, dur = 0.3, type = 'sine', gain = 0.3
   g.gain.setValueAtTime(0.0001, t0);
   g.gain.exponentialRampToValueAtTime(gain, t0 + attack);
   g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-  o.connect(g); g.connect(masterGain);
+  o.connect(g); g.connect(music ? musicGain : masterGain);
   o.start(t0); o.stop(t0 + dur + 0.02);
 }
 
@@ -146,10 +150,10 @@ function buildAmbience() {
   const g = c.createGain(); g.gain.value = 0.5;
   src.connect(filt); filt.connect(g); g.connect(musicGain);
   src.start();
-  // 周期性微弱气泡上扬
+  // 周期性微弱气泡上扬（属于氛围乐：走音乐总线，受音乐开关控制）
   const bubble = setInterval(() => {
     if (!prefs.music || !ctx || ctx.state !== 'running') return;
-    tone({ freq: 200 + Math.random() * 300, endFreq: 900 + Math.random() * 500, dur: 0.3, type: 'sine', gain: 0.05 });
+    tone({ freq: 200 + Math.random() * 300, endFreq: 900 + Math.random() * 500, dur: 0.3, type: 'sine', gain: 0.05, music: true });
   }, 2600);
   ambienceNodes = { src, g, bubbleSet: bubble, freq: filt };
 }
@@ -176,8 +180,47 @@ function tryBgFile() {
   }
   return !!bgAudio;
 }
+// ---- 音乐盒接管：盒子在海里时，用它自己的曲子（单曲循环）替代背景乐 ----
+// 状态做进 applyMusic（每次用户手势都会调它），所以必须在这里感知，而不是在外面硬切
+export function setBoxTrack(track) {
+  const src = track ? track.src : null;
+  if ((activeBox ? activeBox.src : null) === src) return; // 没变化
+  activeBox = track;
+  applyMusic();
+}
+
+export function boxMusicState() {
+  return {
+    active: !!activeBox,
+    name: activeBox ? activeBox.name : null,
+    playing: !!(boxAudio && !boxAudio.paused && !boxAudio.ended),
+  };
+}
+
 function applyMusic() {
-  if (!prefs.music) { if (bgAudio) { bgAudio.pause(); } stopAmbience(); return; }
+  if (!prefs.music) {
+    if (bgAudio) bgAudio.pause();
+    if (boxAudio) boxAudio.pause();
+    stopAmbience();
+    return;
+  }
+  // 音乐盒在场：停掉背景乐与氛围，盒子自己的曲子单曲循环
+  if (activeBox) {
+    if (bgAudio) bgAudio.pause();
+    stopAmbience();
+    if (!boxAudio) {
+      boxAudio = new Audio();
+      boxAudio.loop = true;
+    }
+    if (boxAudio.getAttribute('src') !== activeBox.src) {
+      boxAudio.src = activeBox.src;
+      boxAudio.volume = prefs.musicVolume;
+    }
+    boxAudio.play().catch(() => {}); // 未交互时被拦截也没关系：下次手势的 resumeNow 会重试
+    return;
+  }
+  // 盒子不在了：停掉盒中曲，回落到背景乐 / 氛围
+  if (boxAudio) boxAudio.pause();
   // 优先文件音乐：先停掉合成氛围，避免叠声
   if (bgAudio) { stopAmbience(); bgAudio.play().catch(() => {}); return; }
   // 无文件则用合成氛围

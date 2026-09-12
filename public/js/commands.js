@@ -2,6 +2,7 @@
 // 本地执行，零 token；也支持沫沫在 AI 回复里用 [[cmd: …]] 标记触发
 import { SPECIES } from './species.js';
 import { CYCLE } from './weather.js';
+import { DAY_KEY } from './save.js';
 import { Star } from './star.js';
 import { rand } from './util.js';
 
@@ -115,7 +116,7 @@ export const COMMANDS = [
         const n = parseInt(dm[1], 10);
         if (!(n > 0)) return { ok: false, msg: '天数要大于 0' };
         w.dayCount = n;
-        try { localStorage.setItem('wanling.day', String(n)); } catch { /* 忽略 */ }
+        try { localStorage.setItem(DAY_KEY, String(n)); } catch { /* 忽略 */ }
         return { ok: true, msg: `总天数已设为第 ${n} 天` };
       }
 
@@ -161,6 +162,30 @@ export const COMMANDS = [
       const b = T.spawnBottle(undefined, note || null);
       b.onLanded = () => { };
       return { ok: true, msg: note ? `漂流瓶带着你的字条落下了：「${note}」` : '一只漂流瓶正在落下' };
+    },
+  },
+  {
+    name: 'musicbox', alias: ['音乐盒', 'box'], usage: '/musicbox <序号 | 曲目关键词>', desc: '降一只音乐盒（/musicbox 2 = 第 2 首，也可用关键词）',
+    run(arg, T) {
+      const tracks = T.boxTracks || [];
+      if (!tracks.length) return { ok: false, msg: '还没导入曲目：把音频文件放进 public/audio/box/ 文件夹，等 1 分钟后再试' };
+      const list = tracks.map((t, i) => `${i + 1}.${t.name}`).join('、');
+      const key = (arg || '').trim();
+      let track = null;
+      if (/^\d+$/.test(key)) {
+        // 按序号取（顺序 = 曲目列表顺序，/musicbox 不带参数报序号表）
+        const idx = parseInt(key, 10);
+        if (idx < 1 || idx > tracks.length) return { ok: false, msg: `序号要在 1 ~ ${tracks.length} 之间。可用：${list}` };
+        track = tracks[idx - 1];
+      } else if (key) {
+        track = tracks.find((t) => t.name.toLowerCase().includes(key.toLowerCase()));
+        if (!track) return { ok: false, msg: `没有叫「${key}」的曲目。可用：${list}` };
+      }
+      const mb = T.spawnBox(track || undefined);
+      if (!mb) return { ok: false, msg: '海里的音乐盒够多了（最多同时两只），先收回一只吧' };
+      const idx = tracks.indexOf(mb.track) + 1;
+      // 不带参数时顺便报一遍序号表，方便下次按号点歌
+      return { ok: true, msg: `第 ${idx} 首《${mb.track.name}》音乐盒正在落下${key ? '' : `（曲目表：${list}）`}` };
     },
   },
   {

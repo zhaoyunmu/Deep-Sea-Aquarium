@@ -5,15 +5,21 @@ import { World } from './world.js';
 import { Fish, STAGE_NAMES, STAGE_NUT, makePasserPersona } from './fish.js';
 import { Jellyfish } from './jellyfish.js';
 import { Food, Egg, Sparkles, DustMote } from './food.js';
-import { Collection, STORAGE_KEY as COLLECTION_KEY } from './collection.js';
+import { Collection } from './collection.js';
+import {
+  DAY_KEY, LORE_KEY, SLOT_KEY,
+  saveFish as saveFishState, readFishSave, readEggSave, clearRunSave,
+  buildSnapshot, slotInfo, saveSlot, loadSlot, applyPendingRestore,
+} from './save.js';
 import { Weather } from './weather.js';
 import { Bottle, fetchNote, maybeEnrich } from './bottle.js';
+import { MusicBox, listTracks, BOX_SIZE, BOX_LAND_OFFSET } from './musicbox.js';
 import { Star, generateLastWords } from './star.js';
 import { WhaleStone } from './stone.js';
 import { ClockStone } from './clockstone.js';
 import { AI, ChatPanel, generatePersona, fallbackPersona } from './ai.js';
 import * as UI from './ui.js';
-import { playSfx, prefs, setMusic, setSfx, setMusicVolume } from './audio.js';
+import { playSfx, prefs, setMusic, setSfx, setMusicVolume, setBoxTrack, boxMusicState } from './audio.js';
 
 // ---------- 画布 ----------
 const canvas = el('tank');
@@ -52,14 +58,19 @@ const dusts = [];      // 悬浮的发光尘（成年满营养鱼产出，可点
 const ripples = [];
 const plankton = [];   // 夜光藻
 const bottles = [];    // 海里的漂流瓶（可有多只）
+const boxes = [];      // 海里的音乐盒（可有多只；最靠后的一只在奏乐）
 let bottleTimer = rand(130, 240); // 漂流瓶出现频率：约 2~4 分钟一只
+let boxTimer = rand(200, 380);    // 音乐盒出现频率：约 3.5~6 分钟一只
+let boxTracks = [];               // 可选曲目（public/audio/box/ 文件夹），定时刷新
+function refreshBoxTracks() { listTracks().then((l) => { boxTracks = l; }).catch(() => {}); }
+refreshBoxTracks();
+setInterval(refreshBoxTracks, 60000);
 const stars = [];      // 长眠鱼儿的星辰
 const starQueue = [];  // 待降落的星辰 { x, timer, info, noteP }
 const whaleStone = new WhaleStone(); // 鲸之石：嵌在海床里的石碑
 const clockStone = new ClockStone(); // 时钟日历：左下角海床上的石板
 
-// 总天数跨刷新保留
-const DAY_KEY = 'wanling.day';
+// 总天数跨刷新保留（键名见 save.js）
 try {
   const d = parseInt(localStorage.getItem(DAY_KEY) || '1', 10);
   if (Number.isFinite(d) && d > 0) weather.dayCount = d;
@@ -84,6 +95,7 @@ function resize() {
   for (const f of foods) f.y = Math.min(f.y, world.floorY - 5);
   for (const b of bottles) if (b.landed) b.y = world.floorY - 10;
   for (const st of stars) if (st.landed) st.y = world.floorY - 8;
+  for (const b of boxes) if (b.landed) b.y = world.floorY - BOX_LAND_OFFSET;
   whaleStone.place(W, world);
   clockStone.place(W, world);
   applyUIScale();
@@ -126,40 +138,15 @@ function spawnPlankton(x, y, vx, vy, n = 2) {
   if (plankton.length > 200) plankton.splice(0, plankton.length - 200);
 }
 
-// ---------- 鱼的存档（年龄/营养/名字都会保留） ----------
-const FISH_KEY = 'wanling.fish.v1';
-const SLOT_KEY = 'wanling.slot.v1';        // 手动存档槽
-const PENDING_KEY = 'wanling.pendingRestore'; // 读档后待恢复的世界状态
-
-// 读档瞬间禁止自动保存覆盖（pagehide / 定时器都会触发 saveFish）
-let suppressSave = false;
-
+// ---------- 鱼的存档（实现在 save.js；这里包一层，把鱼群和卵喂给它） ----------
 function saveFish() {
-  if (suppressSave) return;
-  try {
-    localStorage.setItem(FISH_KEY, JSON.stringify(
-      fishes.filter((f) => !f.passer).slice(0, 30).map((f) => ({
-        sp: f.sp.id,
-        age: +f.ageDays.toFixed(2),
-        nut: f.nutrition,
-        life: f.lifespanStd,
-        lifeAct: +f.lifespanActual.toFixed(2),
-        persona: f.persona,
-        log: (f.chatLog || []).slice(-20),
-      })),
-    ));
-    // 未孵化的卵也要存档，别让玩家白花钱
-    localStorage.setItem(FISH_KEY + '.eggs', JSON.stringify(
-      eggs.filter((e) => !e.hatched).map((e) => ({ x: Math.round(e.x), sp: e.sp.id })),
-    ));
-  } catch { /* 存不下就算了 */ }
+  saveFishState(fishes, eggs);
 }
 window.addEventListener('pagehide', saveFish);
 
 // ---------- 初始住民 ----------
 function spawnInitial() {
-  let saved = null;
-  try { saved = JSON.parse(localStorage.getItem(FISH_KEY) || 'null'); } catch { /* 忽略 */ }
+  const saved = readFishSave();
 
   if (Array.isArray(saved) && saved.length) {
     for (const s of saved) {
@@ -177,15 +164,13 @@ function spawnInitial() {
   }
 
   // 未孵化的卵也回到缸里
-  try {
-    const savedEggs = JSON.parse(localStorage.getItem(FISH_KEY + '.eggs') || 'null');
-    if (Array.isArray(savedEggs)) {
-      for (const e of savedEggs) {
-        const sp = SPECIES.find((s) => s.id === e.sp);
-        if (sp) eggs.push(new Egg(e.x ?? rand(W * 0.3, W * 0.7), sp));
-      }
+  const savedEggs = readEggSave();
+  if (Array.isArray(savedEggs)) {
+    for (const e of savedEggs) {
+      const sp = SPECIES.find((s) => s.id === e.sp);
+      if (sp) eggs.push(new Egg(e.x ?? rand(W * 0.3, W * 0.7), sp));
     }
-  } catch { /* 忽略 */ }
+  }
 
   if (fishes.length) return;
 
@@ -205,36 +190,9 @@ function spawnInitial() {
 }
 spawnInitial();
 
-// 读档后：把存档那一刻的天气、海里的漂流瓶与星辰一并还原
-function applyPendingRestore() {
-  let pw = null;
-  try {
-    pw = JSON.parse(localStorage.getItem(PENDING_KEY) || 'null');
-  } catch { pw = null; }
-  if (!pw) return;
-  try { localStorage.removeItem(PENDING_KEY); } catch { /* 忽略 */ }
-  if (pw.weather) Object.assign(weather, pw.weather);
-  if (Array.isArray(pw.bottles)) {
-    for (const b of pw.bottles) {
-      const nb = new Bottle(clamp(b.x, 20, W - 20), b.note ?? null);
-      nb.y = b.landed ? world.floorY - 10 : Math.min(b.y ?? 0, world.floorY - 20);
-      nb.landed = !!b.landed;
-      nb.sandAge = b.sandAge ?? 0;
-      nb.bury = clamp(nb.sandAge, 0, 1);
-      bottles.push(nb);
-    }
-  }
-  if (Array.isArray(pw.stars)) {
-    for (const s of pw.stars) {
-      const ns = new Star(clamp(s.x, 20, W - 20), s.info || { name: '无名' }, s.note ?? null);
-      ns.y = s.landed ? world.floorY - 8 : Math.min(s.y ?? 0, world.floorY - 20);
-      ns.landed = !!s.landed;
-      ns.age = s.age ?? 0;
-      stars.push(ns);
-    }
-  }
-}
-applyPendingRestore();
+// 读档后：把存档那一刻的天气、海里的漂流瓶、星辰与音乐盒一并还原（实现在 save.js）
+applyPendingRestore({ weather, world, bottles, stars, boxes, Bottle, Star, MusicBox });
+syncBoxMusic(); // 存档时海里有音乐盒的话，音乐跟着回来
 
 collection.onchange = () => UI.updateHUD(collection.lumens, residentCount());
 
@@ -246,15 +204,13 @@ function selectFish(fish) {
   if (selected && selected !== fish) selected.hold = null;
   selected = fish;
   fish.hold = { x: fish.x, y: fish.y };
-  chat.openFor(fish, {
-    onSelectPersona: () => UI.updateHUD(collection.lumens, residentCount()),
-  });
+  chat.openFor(fish);
 }
 
 function selectJelly(j) {
   playSfx('select');
   deselect();
-  chat.openFor(j, {});
+  chat.openFor(j);
 }
 
 function deselect() {
@@ -375,7 +331,6 @@ async function hatch(egg) {
 }
 
 // ---------- 深海叙事：首次事件解锁老水母的线索 ----------
-const LORE_KEY = 'wanling.lore';
 function loadLore() {
   const d = { grown: false, bottle: false, rare: false, bury: false };
   try { return { ...d, ...(JSON.parse(localStorage.getItem(LORE_KEY) || '{}')) }; } catch { return d; }
@@ -444,6 +399,45 @@ async function openStar(st) {
   UI.toast('⭐ 星辰已收进背包，它会替它记得');
 }
 
+// ---------- 音乐盒：每只绑定一首曲子，在海里就单曲循环，收回背包即静 ----------
+// 海里有多只时，最新的一只在响；它被收回后，前一只接棒
+function syncBoxMusic() {
+  setBoxTrack(boxes.length ? boxes[boxes.length - 1].track : null);
+}
+
+function spawnMusicBox(track) {
+  if (boxes.length >= 2) return null;
+  if (!track) {
+    if (!boxTracks.length) return null;
+    track = boxTracks[(Math.random() * boxTracks.length) | 0];
+  }
+  const mb = new MusicBox(rand(W * 0.2, W * 0.8), track);
+  mb.onLanded = () => UI.toast(`🎵 《${track.name}》音乐盒在沙床上奏响了`, true);
+  boxes.push(mb);
+  syncBoxMusic();
+  UI.toast(`🎵 一只《${track.name}》音乐盒缓缓沉了下来…`, true);
+  return mb;
+}
+
+function collectBox(b) {
+  if (!b || b.opened) return;
+  b.opened = true;
+  boxes.splice(boxes.indexOf(b), 1);
+  playSfx('collect');
+  sparkles.burst(b.x, b.y, rgba('#ffe9b0', 0.9), 14, 70);
+  ripples.push({ x: b.x, y: b.y, r: 6, life: 0 });
+  collection.addToBackpack({
+    id: `mb${Date.now()}${Math.floor(Math.random() * 999)}`,
+    type: 'box',
+    name: b.track.name,
+    src: b.track.src,
+    cover: b.track.cover ?? null,
+    time: Date.now(),
+  });
+  syncBoxMusic(); // 背包空了或前一只接棒，音乐自动切换
+  UI.toast(`🎵 《${b.track.name}》音乐盒已收进背包，海面恢复了平日的声音`);
+}
+
 // ---------- 指针 ----------
 let lastMove = null;
 let lastSpawn = 0;
@@ -476,15 +470,15 @@ let holdFeeding = false;
 let holdTimer = 0;
 
 function hitTest(x, y) {
-  for (const d of dusts) {
-    if (Math.hypot(d.x - x, d.y - y) < 24) return { type: 'dust', obj: d };
-  }
   if (whaleStone.contains(x, y)) return { type: 'stone' };
   for (const st of stars) {
     if (st.alive && Math.hypot(st.x - x, st.y - y) < 44) return { type: 'star', obj: st };
   }
   for (const b of bottles) {
     if (b.bury < 1 && Math.hypot(b.x - x, b.y - y) < 40) return { type: 'bottle', obj: b };
+  }
+  for (const b of boxes) {
+    if (Math.hypot(b.x - x, b.y - y) < 34 * BOX_SIZE) return { type: 'box', obj: b };
   }
   for (const egg of eggs) {
     if (Math.hypot(egg.x - x, egg.y - y) < 46) return { type: 'egg', obj: egg };
@@ -495,6 +489,10 @@ function hitTest(x, y) {
   }
   for (const j of jellies) {
     if (Math.hypot(j.x - x, j.y - y) < j.r + 22) return { type: 'jelly', obj: j };
+  }
+  // 发光尘最后判定：尘是在鱼身上产出的，鱼优先，点鱼聊天才不会被截胡
+  for (const d of dusts) {
+    if (Math.hypot(d.x - x, d.y - y) < 24) return { type: 'dust', obj: d };
   }
   return null;
 }
@@ -527,6 +525,7 @@ canvas.addEventListener('click', (e) => {
     }
     if (hit.type === 'star') return openStar(hit.obj);
     if (hit.type === 'bottle') return openBottle(hit.obj);
+    if (hit.type === 'box') return collectBox(hit.obj);
     if (hit.type === 'egg') return hatch(hit.obj);
     if (hit.type === 'fish') return selectFish(hit.obj);
     if (hit.type === 'jelly') return selectJelly(hit.obj);
@@ -578,6 +577,7 @@ function hideAllPanels() {
   UI.togglePanel('panel-backpack', false);
   UI.togglePanel('help-overlay', false);
   UI.togglePanel('bottle-overlay', false);
+  UI.togglePanel('star-overlay', false);
   UI.togglePanel('panel-settings', false);
 }
 
@@ -594,12 +594,12 @@ function resetRun() {
   bottles.length = 0;
   stars.length = 0;
   starQueue.length = 0;
+  boxes.length = 0;
+  syncBoxMusic(); // 盒子都没了，音乐回落到背景乐
   bottleTimer = rand(130, 240);
+  boxTimer = rand(200, 380);
   // 删掉旧鱼/卵存档，让 spawnInitial 走"新档"分支
-  try {
-    localStorage.removeItem(FISH_KEY);
-    localStorage.removeItem(FISH_KEY + '.eggs');
-  } catch { /* 隐私模式无所谓 */ }
+  clearRunSave();
   spawnInitial();
   UI.updateHUD(collection.lumens, residentCount());
   UI.toast('🧹 新的一局开始——缸里已经有了新的住民', true);
@@ -619,67 +619,11 @@ el('btn-settings').addEventListener('click', () => {
   UI.togglePanel('panel-settings-overlay', true);
 });
 
-// ---------- 存档槽：手动存档 / 读档 ----------
+// ---------- 存档槽：手动存档 / 读档（读写实现见 save.js） ----------
 
 // 把此刻的整缸状态打包
-function buildSnapshot() {
-  saveFish();            // 先把当前鱼群写进常规存档键
-  collection.save();
-  let fish = [], eggs = [];
-  try {
-    fish = JSON.parse(localStorage.getItem(FISH_KEY) || '[]');
-    eggs = JSON.parse(localStorage.getItem(FISH_KEY + '.eggs') || '[]');
-  } catch { /* 忽略 */ }
-  return {
-    at: Date.now(),
-    fish,
-    eggs,
-    collection: JSON.parse(JSON.stringify(collection.data)),
-    lore: { ...lore },
-    weather: {
-      t0: weather.t0,
-      state: weather.state,
-      stateTimer: weather.stateTimer,
-      rainI: weather.rainI,
-      stormI: weather.stormI,
-      fireDawn: weather.fireDawn,
-      fireDusk: weather.fireDusk,
-      dayCount: weather.dayCount,
-    },
-    bottles: bottles.map((b) => ({ x: Math.round(b.x), y: Math.round(b.y), landed: b.landed, note: b.note ?? null, sandAge: b.sandAge })),
-    stars: stars.map((s) => ({ x: Math.round(s.x), y: Math.round(s.y), landed: s.landed, info: s.info, note: s.note ?? null, age: s.age })),
-  };
-}
-
-function slotInfo() {
-  try {
-    const s = JSON.parse(localStorage.getItem(SLOT_KEY) || 'null');
-    if (!s || !s.at) return null;
-    return { at: s.at, fish: (s.fish || []).length };
-  } catch { return null; }
-}
-
-function saveSlot() {
-  try {
-    localStorage.setItem(SLOT_KEY, JSON.stringify(buildSnapshot()));
-    return true;
-  } catch { return false; }
-}
-
-// 把存档写回常规存储键，然后刷新（所有既有加载逻辑都会读到它）
-function loadSlot() {
-  suppressSave = true; // 关键：别让卸载时的自动保存把还原的数据再盖回去
-  let s = null;
-  try { s = JSON.parse(localStorage.getItem(SLOT_KEY) || 'null'); } catch { s = null; }
-  if (!s) return false;
-  try {
-    localStorage.setItem(FISH_KEY, JSON.stringify(s.fish || []));
-    localStorage.setItem(FISH_KEY + '.eggs', JSON.stringify(s.eggs || []));
-    if (s.collection) localStorage.setItem(COLLECTION_KEY, JSON.stringify(s.collection));
-    if (s.lore) localStorage.setItem('wanling.lore', JSON.stringify(s.lore));
-    localStorage.setItem(PENDING_KEY, JSON.stringify({ weather: s.weather, bottles: s.bottles, stars: s.stars }));
-    return true;
-  } catch { return false; }
+function snapshotNow() {
+  return buildSnapshot({ fishes, eggs, collection, lore, weather, bottles, stars, boxes });
 }
 
 function fmtSlotTime(ts) {
@@ -705,8 +649,28 @@ function updateSlotUI() {
   }
 }
 
+// ---------- 游戏内确认框（代替 window.confirm：不出戏、不冻结渲染） ----------
+let confirmResolve = null;
+function uiConfirm(text, okLabel = '确定') {
+  return new Promise((resolve) => {
+    confirmResolve = resolve;
+    el('confirm-text').textContent = text;
+    el('confirm-ok').textContent = okLabel;
+    UI.togglePanel('confirm-overlay', true);
+  });
+}
+function settleConfirm(v) {
+  if (!confirmResolve) return;
+  const r = confirmResolve;
+  confirmResolve = null;
+  UI.togglePanel('confirm-overlay', false);
+  r(v);
+}
+el('confirm-ok').addEventListener('click', () => settleConfirm(true));
+el('confirm-cancel').addEventListener('click', () => settleConfirm(false));
+
 el('btn-save').addEventListener('click', () => {
-  if (saveSlot()) {
+  if (saveSlot(snapshotNow())) {
     updateSlotUI();
     UI.toast('💾 已存入存档槽——之后随时可以读回来');
   } else {
@@ -714,21 +678,62 @@ el('btn-save').addEventListener('click', () => {
   }
 });
 
-el('btn-load').addEventListener('click', () => {
+el('btn-load').addEventListener('click', async () => {
   const info = slotInfo();
   if (!info) return UI.toast('还没有手动存档，先点「存档」');
-  if (!window.confirm(`读取 ${fmtSlotTime(info.at)} 的存档？
+  const ok = await uiConfirm(`读取 ${fmtSlotTime(info.at)} 的存档？
 
-缸里的鱼、发光尘、图鉴、天气都会回到那一刻（当前进度将被覆盖）。`)) return;
+缸里的鱼、发光尘、图鉴、天气都会回到那一刻（当前进度将被覆盖）。`, '读取');
+  if (!ok) return;
   if (loadSlot()) location.reload();
   else UI.toast('读档失败：存档已损坏');
 });
 
 updateSlotUI();
 
-el('btn-reset').addEventListener('click', () => {
-  if (!window.confirm('重新开一局？将清空当前缸里的鱼群与未孵化的卵，但会保留图鉴收集进度与发光尘。')) return;
-  resetRun();
+el('btn-reset').addEventListener('click', async () => {
+  const ok = await uiConfirm('重新开一局？将清空当前缸里的鱼群与未孵化的卵，但会保留图鉴收集进度与发光尘。', '重开');
+  if (ok) resetRun();
+});
+
+// ---------- 导出 / 导入存档（分享你的缸） ----------
+el('btn-export').addEventListener('click', () => {
+  const snap = snapshotNow();
+  snap.wanlingSave = 1; // 文件标识：导入时校验用
+  const blob = new Blob([JSON.stringify(snap)], { type: 'application/json' });
+  const a = document.createElement('a');
+  const d = new Date();
+  const p2 = (n) => String(n).padStart(2, '0');
+  a.href = URL.createObjectURL(blob);
+  a.download = `万灵缸存档_${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+  UI.toast('📤 存档已导出——发给别人，就能捞一捞你的缸');
+});
+
+el('btn-import').addEventListener('click', () => el('import-file').click());
+el('import-file').addEventListener('change', async (e) => {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  let snap = null;
+  try { snap = JSON.parse(await file.text()); } catch { snap = null; }
+  // 宽松校验：不认文件标识也行，但鱼册和图鉴数据必须长得像
+  if (!snap || !Array.isArray(snap.fish) || typeof snap.collection !== 'object' || snap.collection === null) {
+    return UI.toast('这不是万灵缸的存档文件哦');
+  }
+  const when = snap.at ? fmtSlotTime(snap.at) : '未知时间';
+  const ok = await uiConfirm(`导入 ${when} 的存档？
+
+缸里的鱼、发光尘、图鉴、天气都会换成文件里的那一刻（当前进度将被覆盖）。`, '导入');
+  if (!ok) return;
+  try {
+    localStorage.setItem(SLOT_KEY, JSON.stringify(snap));
+    if (loadSlot()) location.reload();
+    else UI.toast('导入失败：内容无法写入存档槽');
+  } catch {
+    UI.toast('导入失败：文件太大或已损坏');
+  }
 });
 
 // ---------- 显示鱼名开关 ----------
@@ -762,12 +767,14 @@ musicVol.addEventListener('input', () => setMusicVolume(parseFloat(musicVol.valu
 
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
+    settleConfirm(false);
     deselect();
     chat.close();
     UI.togglePanel('panel-collection', false);
     UI.togglePanel('panel-backpack', false);
     UI.togglePanel('help-overlay', false);
     UI.togglePanel('bottle-overlay', false);
+    UI.togglePanel('star-overlay', false);
     UI.togglePanel('panel-settings-overlay', false);
   }
 });
@@ -813,7 +820,7 @@ el('set-save').addEventListener('click', async () => {
     });
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || '保存失败');
-    UI.toast(d.hasKey ? '⚙️ AI 配置已保存并生效' : '已保存——但还没有 Key，鱼儿暂时不能说话', d.hasKey);
+    UI.toast(d.hasKey ? '🐋 密语已刻入——鲸之石亮了，海洋的智慧醒了' : '已保存——但还没有密语，鱼儿暂时不能说话', d.hasKey);
     await AI.probe();
     UI.setAIStatus(AI.online, AI.model, AI.hasKey);
     await loadSettings();
@@ -832,7 +839,7 @@ el('set-clear').addEventListener('click', async () => {
     await AI.probe();
     UI.setAIStatus(AI.online, AI.model, AI.hasKey);
     await loadSettings();
-    UI.toast('已清除 Key');
+    UI.toast('已抹去密语');
   } catch {
     UI.toast('清除失败');
   }
@@ -880,12 +887,13 @@ function updateDust(dt) {
       sparkles.burst(f.x, f.y - 6, rgba('#6fe3ff', 0.9), 8, 60);
     }
   }
-  // 清理：被收集或到时的发光尘；鼠标靠近时光尘自动飞向 collection（吸收收集）
+  // 鼠标停靠处每帧只做一次命中测试：停在鱼/卵/瓶等身上时不自动收尘，别跟玩家的点击抢
+  const hover = cursor.active ? hitTest(cursor.x, cursor.y) : null;
   for (let i = dusts.length - 1; i >= 0; i--) {
     dusts[i].update(dt, performance.now() / 1000, world);
     const d = dusts[i];
-    // 鼠标靠近即自动收集：动效与点击收集一致（走同一 collectDust）
-    if (cursor.active && Math.hypot(d.x - cursor.x, d.y - cursor.y) < 46) {
+    // 鼠标靠近即自动收集（仅当没停在别的对象上）：动效与点击收集一致（走同一 collectDust）
+    if (cursor.active && (!hover || hover.type === 'dust') && Math.hypot(d.x - cursor.x, d.y - cursor.y) < 46) {
       collectDust(d);
       if (d.gone) dusts.splice(i, 1);
       continue;
@@ -934,12 +942,21 @@ function renderBackpack() {
 
   const buildRow = (item, trashed) => {
     const isStar = item.type === 'star';
+    const isBox = item.type === 'box';
     const row = document.createElement('div');
     row.className = 'bp-item' + (isStar ? ' bp-star' : '') + (trashed ? ' trashed' : '');
 
-    const ico = document.createElement('span');
-    ico.className = 'bp-ico';
-    ico.textContent = isStar ? '⭐' : '🧴';
+    let iconEl;
+    if (isBox && item.cover) {
+      iconEl = document.createElement('img');
+      iconEl.className = 'bp-ico bp-cover';
+      iconEl.src = item.cover;
+      iconEl.alt = '';
+    } else {
+      iconEl = document.createElement('span');
+      iconEl.className = 'bp-ico';
+      iconEl.textContent = isStar ? '⭐' : isBox ? '🎵' : '🧴';
+    }
 
     const text = document.createElement('div');
     text.className = 'bp-text';
@@ -947,6 +964,8 @@ function renderBackpack() {
     note.className = 'bp-note';
     if (isStar) {
       note.textContent = item.note || '……';
+    } else if (isBox) {
+      note.textContent = `《${item.name}》音乐盒`;
     } else {
       note.textContent = item.note.startsWith('「') ? item.note : `「${item.note}」`;
     }
@@ -959,7 +978,7 @@ function renderBackpack() {
       : `${timeStr} 捞起`;
     text.append(note, time);
 
-    row.append(ico, text);
+      row.append(iconEl, text);
 
     if (!trashed) {
       // 收藏
@@ -983,8 +1002,9 @@ function renderBackpack() {
       del.textContent = '🗑';
       del.addEventListener('pointerdown', (e) => e.stopPropagation());
       del.addEventListener('click', (e) => { e.stopPropagation(); collection.toTrash(item.id); UI.toast('已移入垃圾箱'); });
-      // 爱心(收藏夹)里的珍藏不能丢进垃圾桶，因此不显示删除按钮
-      row.append(fav, edit);
+      // 爱心(收藏夹)里的珍藏不能丢进垃圾桶，因此不显示删除按钮；音乐盒没有话语可改写
+      row.append(fav);
+      if (!isBox) row.append(edit);
       if (backpackView !== 'fav') row.append(del);
 
       const hint = document.createElement('span');
@@ -1067,7 +1087,7 @@ function startBottleDrag(e, item) {
   dragItem = { ...item };
   ghostEl = document.createElement('div');
   ghostEl.className = 'bp-ghost';
-  ghostEl.textContent = item.type === 'star' ? '⭐' : '🧴'; // 图标与所拖物品统一
+  ghostEl.textContent = item.type === 'star' ? '⭐' : item.type === 'box' ? '🎵' : '🧴'; // 图标与所拖物品统一
   document.body.appendChild(ghostEl);
   moveGhost(e.clientX, e.clientY);
   window.addEventListener('pointermove', moveGhost);
@@ -1097,6 +1117,16 @@ function endBottleDrag(e) {
 
 function throwFromBackpack(item, x, y) {
   collection.removeFromBackpack(item.id);
+  if (item.type === 'box') {
+    const mb = new MusicBox(clamp(x, 30, W - 30), { name: item.name, src: item.src, cover: item.cover ?? null });
+    mb.y = clamp(y, 24, world.floorY - 20);
+    mb.vy = 26;
+    boxes.push(mb);
+    syncBoxMusic(); // 盒子一入水，曲子就替代背景乐
+    ripples.push({ x: mb.x, y: mb.y, r: 6, life: 0 });
+    UI.toast(`🎵 《${item.name}》音乐盒又开始奏乐了`);
+    return;
+  }
   if (item.type === 'star') {
     const st = new Star(clamp(x, 30, W - 30), item.meta || { name: '无名' }, item.note || null);
     st.y = clamp(y, 24, world.floorY - 20);
@@ -1137,17 +1167,68 @@ function updateEnvChip(t) {
 
 // ---------- 调试/测试钩子 ----------
 window.__tank = {
-  fishes, eggs, foods, dusts, jellies, collection, weather, bottles, stars, starQueue, world, cursor,
+  fishes, eggs, foods, dusts, jellies, collection, weather, bottles, stars, starQueue, world, cursor, boxes,
+  get boxTracks() { return boxTracks; },
+  get boxMusic() { return boxMusicState(); },
   get bottleTimer() { return bottleTimer; },
   set bottleTimer(v) { bottleTimer = v; },
   get passerTimer() { return passerTimer; },
   set passerTimer(v) { passerTimer = v; },
   feed, buyEgg, hatch, selectFish, shockwave, saveFish, collectDust, selectJelly, unlockLore,
+  collectBox,
+  spawnBox: spawnMusicBox,
   spawnDust: (x, y, n) => { const d = new DustMote(x ?? W * 0.5, y ?? H * 0.5, n ?? 2); dusts.push(d); return d; },
   spawnFish: (id) => { const sp = SPECIES.find((s) => s.id === id) || SPECIES[0]; const f = new Fish(sp, W * 0.35, H * 0.35); fishes.push(f); return f; },
   spawnBottle: (x, note) => { const b = new Bottle(x ?? rand(W * 0.3, W * 0.7), note ?? null); bottles.push(b); return b; },
   throwFromBackpack,
 };
+
+// ---------- 名牌文字宽度缓存（名字几乎不变，不必每帧 measureText） ----------
+const textWCache = new Map();
+function textW(text) {
+  const key = ctx.font + '\u0000' + text;
+  let w = textWCache.get(key);
+  if (w === undefined) {
+    if (textWCache.size > 400) textWCache.clear();
+    w = ctx.measureText(text).width;
+    textWCache.set(key, w);
+  }
+  return w;
+}
+
+// ---------- 围观力场：漂流瓶 / 星辰共用 ----------
+// 远处的鱼被吸引（拉力随距离衰减、带保底），近处的鱼绕着兜圈（切向力 + 半径弹簧）。
+// 兴趣系数 k = 兴趣(entity) ×（路过鱼 ? passerK : 1），0.15 以下视为毫无兴趣。
+function swirlAttract(entities, fishes, dt, o) {
+  const val = (v, e) => (typeof v === 'function' ? v(e) : v);
+  for (const e of entities) {
+    const k0 = o.interest ? o.interest(e) : 1;
+    if (k0 < 0.15) continue;
+    const cx = e.x;
+    const cy = val(o.centerY, e);
+    const orbitR = val(o.orbitR, e);
+    const pullA = val(o.pullA, e);
+    for (const f of fishes) {
+      if (o.skip && o.skip(f)) continue;
+      const dx = cx - f.x, dy = cy - f.y;
+      const d = Math.hypot(dx, dy);
+      if (d >= o.radius || d <= 1) continue;
+      const k = k0 * (o.passerK && f.passer ? o.passerK : 1);
+      if (o.cur) o.cur(f, k);
+      const dir = f.seed % 2 < 1 ? 1 : -1;
+      if (d > o.orbitBreak) {
+        const pull = (pullA + (1 - d / o.radius) * o.pullB) * k;
+        f.vx += (dx / d) * pull * dt;
+        f.vy += (dy / d) * pull * dt;
+      } else {
+        const tx = -dy / d, ty = dx / d;
+        const radial = (d - orbitR) * o.radialK; // 太近往外推，太远往里拉
+        f.vx += (tx * o.spin * dir * k + (dx / d) * radial) * dt;
+        f.vy += (ty * o.spin * dir * 0.45 * k + (dy / d) * radial * 0.45) * dt;
+      }
+    }
+  }
+}
 
 // ---------- 主循环 ----------
 let last = performance.now();
@@ -1213,6 +1294,7 @@ function tick(now) {
   for (const egg of eggs) egg.update(dt, t, world);
   for (const b of bottles) b.update(dt, t, world);
   for (const st of stars) st.update(dt, t, world);
+  for (const b of boxes) b.update(dt, t, world);
   // 完全没入沙中的瓶子从海里消失
   for (let i = bottles.length - 1; i >= 0; i--) {
     if (bottles[i].bury >= 1) bottles.splice(i, 1);
@@ -1230,63 +1312,40 @@ function tick(now) {
     }
   }
 
-  // 漂流瓶吸引鱼群围观：路过鱼与弥留的鱼都毫无兴趣
+  // 漂流瓶吸引鱼群围观：路过鱼与弥留的鱼都毫无兴趣；下坠时吸引力满格，陷沙越深越没鱼搭理
   for (const f of fishes) if (!f.passer) f._bottleCur = null;
-  for (const b of bottles) {
-    if (b.bury >= 1) continue;
-    const falling = !b.landed;
-    const bx = b.x;
-    const by = b.y - (falling ? 34 : 52); // 兜圈中心：瓶子上方
-    const fade = 1 - b.bury; // 下坠时 bury=0 吸引力满格；陷沙越深越没鱼搭理
-    if (fade < 0.15) continue; // 陷得太深，鱼已经完全不感兴趣
-    for (const f of fishes) {
-      if (f.passer || f.dying) continue; // 旅人对瓶子不感兴趣；弥留的鱼不被打扰
-      const dx = bx - f.x, dy = by - f.y;
-      const d = Math.hypot(dx, dy);
-      if (d >= 620 || d <= 1) continue;
-      if (fade > 0.15) f._bottleCur = fade; // 陷沙越深，鱼对瓶子的兴趣越低（回游习性逐渐恢复）
-      const dir = f.seed % 2 < 1 ? 1 : -1;
-      if (d > 140) {
-        // 远处：被瓶子吸引（带保底拉力），拉力随陷沙深度衰减
-        const pull = ((falling ? 170 : 120) + (1 - Math.min(d, 620) / 620) * 180) * fade;
-        f.vx += (dx / d) * pull * dt;
-        f.vy += (dy / d) * pull * dt;
-      } else {
-        // 近处：绕着瓶子巡游，半径稳定（下坠时圈子稍大，别碰到瓶身）
-        const tx = -dy / d, ty = dx / d;
-        const radial = (d - (falling ? 92 : 80)) * 1.6; // 太近往外推，太远往里拉
-        f.vx += (tx * 130 * dir * fade + (dx / d) * radial) * dt;
-        f.vy += (ty * 130 * dir * 0.45 * fade + (dy / d) * radial * 0.45) * dt;
-      }
-    }
-  }
+  swirlAttract(bottles, fishes, dt, {
+    radius: 620, orbitBreak: 140,
+    orbitR: (b) => (b.landed ? 80 : 92),        // 下坠时圈子稍大，别碰到瓶身
+    centerY: (b) => b.y - (b.landed ? 52 : 34), // 兜圈中心：瓶子上方
+    pullA: (b) => (b.landed ? 120 : 170), pullB: 180,
+    spin: 130, radialK: 1.6,
+    interest: (b) => 1 - b.bury,
+    skip: (f) => f.passer || f.dying,
+    cur: (f, k) => { f._bottleCur = k; },
+  });
 
-  // 星辰：对鱼的吸引力比漂流瓶更大，路过鱼也偶尔驻足
-  for (const st of stars) {
-    if (!st.alive) continue;
-    const falling = !st.landed;
-    const bx = st.x;
-    const by = st.y - (falling ? 40 : 46);
-    for (const f of fishes) {
-      if (f.dying || f.burrowing) continue;
-      const dx = bx - f.x, dy = by - f.y;
-      const d = Math.hypot(dx, dy);
-      if (d >= 700 || d <= 1) continue;
-      f._bottleCur = 1;
-      const dir = f.seed % 2 < 1 ? 1 : -1;
-      const passerK = f.passer ? 0.4 : 1; // 旅人鱼只是稍作停留
-      if (d > 150) {
-        const pull = (1 - d / 700) * 340 * passerK;
-        f.vx += (dx / d) * pull * dt;
-        f.vy += (dy / d) * pull * dt;
-      } else {
-        const tx = -dy / d, ty = dx / d;
-        const radial = (d - 88) * 1.5;
-        f.vx += (tx * 140 * dir * passerK + (dx / d) * radial) * dt;
-        f.vy += (ty * 140 * dir * 0.45 * passerK + (dy / d) * radial * 0.45) * dt;
-      }
-    }
-  }
+  // 星辰：对鱼的吸引力比漂流瓶更大，路过鱼也偶尔驻足（旅人鱼只是稍作停留）
+  swirlAttract(stars, fishes, dt, {
+    radius: 700, orbitBreak: 150, orbitR: 88,
+    centerY: (st) => st.y - (st.landed ? 46 : 40),
+    pullA: 0, pullB: 340,
+    spin: 140, radialK: 1.5,
+    interest: (st) => (st.alive ? 1 : 0),
+    skip: (f) => f.dying || f.burrowing,
+    passerK: 0.4,
+    cur: (f) => { f._bottleCur = 1; },
+  });
+
+  // 音乐盒：鱼群围观听歌（收回背包后自然散去；弥留的鱼不被打扰）
+  swirlAttract(boxes, fishes, dt, {
+    radius: 520, orbitBreak: 130, orbitR: 76,
+    centerY: (b) => b.y - 30,
+    pullA: 40, pullB: 260,
+    spin: 110, radialK: 1.4,
+    skip: (f) => f.dying || f.burrowing,
+    passerK: 0.5,
+  });
 
   // 夜光藻漂移
   for (let i = plankton.length - 1; i >= 0; i--) {
@@ -1307,6 +1366,15 @@ function tick(now) {
       b.onLanded = () => UI.toast('🧴 一只漂流瓶沉到了沙床上…', true);
       bottles.push(b);
       bottleTimer = rand(130, 240);
+    }
+  }
+
+  // 音乐盒事件：海里最多同时两只，比漂流瓶更稀罕（没导入曲目时不会有）
+  if (boxes.length < 2) {
+    boxTimer -= dt;
+    if (boxTimer <= 0) {
+      boxTimer = rand(200, 380);
+      spawnMusicBox();
     }
   }
 
@@ -1358,6 +1426,7 @@ function tick(now) {
   for (const egg of eggs) egg.draw(ctx, t);
   for (const b of bottles) b.draw(ctx, t, env);
   for (const st of stars) st.draw(ctx, t);
+  for (const b of boxes) b.draw(ctx, t, env, boxes[boxes.length - 1] === b);
   sparkles.draw(ctx);
   world.drawMid(ctx, t, env);
 
@@ -1407,7 +1476,7 @@ function tick(now) {
 
     const name = selected.persona ? selected.persona.name : '未登记';
     ctx.font = '14px "Microsoft YaHei", sans-serif';
-    const tw = ctx.measureText(name).width;
+    const tw = textW(name);
     const bx = selected.x - tw / 2 - 12;
     const by = selected.y - L - 34;
     ctx.fillStyle = 'rgba(4,16,30,0.8)';
@@ -1425,7 +1494,7 @@ function tick(now) {
   for (const f of fishes) {
     if (!f.passer || !f.persona || selected === f) continue;
     ctx.font = '12px "Microsoft YaHei", sans-serif';
-    const tw = ctx.measureText(f.persona.name).width;
+    const tw = textW(f.persona.name);
     const bx = f.x - tw / 2 - 10;
     const by = f.y - f.length - 26;
     ctx.fillStyle = 'rgba(4,16,30,0.5)';
@@ -1443,7 +1512,7 @@ function tick(now) {
       const name = f.persona.name;
       const rc = RARITY_COLORS[f.sp.rarity] || RARITY_COLORS[0];
       ctx.font = '13px "Microsoft YaHei", sans-serif';
-      const tw = ctx.measureText(name).width;
+      const tw = textW(name);
       const bx = f.x - tw / 2 - 11;
       const by = f.y - f.length - 28;
       // 自家鱼名牌：按物种稀有度着色（描边 + 微光），文字保持高亮

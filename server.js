@@ -88,6 +88,15 @@ const MIME = {
   '.png': 'image/png',
   '.ico': 'image/x-icon',
   '.woff2': 'font/woff2',
+  '.mp3': 'audio/mpeg',
+  '.ogg': 'audio/ogg',
+  '.wav': 'audio/wav',
+  '.flac': 'audio/flac',
+  '.m4a': 'audio/mp4',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
 };
 
 function send(res, code, body, type = 'application/json; charset=utf-8') {
@@ -187,7 +196,7 @@ const server = http.createServer(async (req, res) => {
   // 聊天/生成档案的统一入口
   if (req.method === 'POST' && url.pathname === '/api/chat') {
     if (!CFG.key) {
-      return send(res, 503, JSON.stringify({ error: 'AI 未接入：请把 DeepSeek key 填进 .env 后重启服务' }));
+      return send(res, 503, JSON.stringify({ error: '海洋的智慧尚未醒来——请先到右下角的鲸之石刻入密语' }));
     }
     try {
       const body = JSON.parse(await readBody(req));
@@ -198,9 +207,34 @@ const server = http.createServer(async (req, res) => {
       const reply = await callDeepSeek(system, messages, temperature, maxTokens);
       return send(res, 200, JSON.stringify({ reply }));
     } catch (err) {
-      const msg = err.name === 'AbortError' ? 'AI 请求超时' : (err.message || 'AI 请求失败');
+      const msg = err.name === 'AbortError' ? '海洋的智慧一时没有回应（请求超时）' : (err.message || '海洋的智慧一时没有回应');
       return send(res, 502, JSON.stringify({ error: msg }));
     }
+  }
+
+  // 音乐盒曲目列表：public/audio/box/ 下的音频文件（同名图片 = 封面）
+  if (req.method === 'GET' && url.pathname === '/api/tracks') {
+    const dir = path.join(PUBLIC_DIR, 'audio', 'box');
+    const AUDIO_EXT = ['.mp3', '.ogg', '.wav', '.flac', '.m4a'];
+    const IMG_EXT = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
+    const tracks = [];
+    try {
+      const files = fs.readdirSync(dir);
+      for (const f of files) {
+        const dot = f.lastIndexOf('.');
+        if (dot <= 0) continue;
+        const ext = f.slice(dot).toLowerCase();
+        if (!AUDIO_EXT.includes(ext)) continue;
+        const base = f.slice(0, dot);
+        const coverExt = IMG_EXT.find((ie) => files.includes(base + ie)) || null;
+        tracks.push({
+          name: base,
+          src: `/audio/box/${encodeURIComponent(f)}`,
+          cover: coverExt ? `/audio/box/${encodeURIComponent(base + coverExt)}` : null,
+        });
+      }
+    } catch { /* 目录不存在 = 还没导入曲目 */ }
+    return send(res, 200, JSON.stringify(tracks));
   }
 
   // 静态文件
@@ -219,7 +253,11 @@ const server = http.createServer(async (req, res) => {
   send(res, 405, 'method not allowed', 'text/plain');
 });
 
-server.listen(PORT, () => {
+// 默认只监听回环地址：/api/chat 无鉴权，绑 0.0.0.0 会让局域网设备白嫖你的 API key。
+// 确有局域网/手机访问需求时，在 .env 里设 HOST=0.0.0.0（并自行承担 key 外泄风险）。
+const HOST = process.env.HOST || '127.0.0.1';
+
+server.listen(PORT, HOST, () => {
   console.log(`\n  🌊 万灵缸已注入海水: http://localhost:${PORT}`);
   console.log(`  AI: ${CFG.key ? `已接入 (${CFG.model})` : '未接入 — 可在页面右上角 ⚙️ 里直接配置，或把 key 填进 .env 后重启'}\n`);
 });

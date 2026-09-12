@@ -114,11 +114,17 @@ export async function generateNote() {
   return null;
 }
 
-// 开瓶时抽一句：所有句子（经典句 / 名人名言 / AI 句）概率相等，放进统一池子均匀抽取
+// AI 句子在开瓶时的整体出场率（经典句与名人名言分剩下的份额）；
+// 句库再多 AI 句也不喧宾夺主。想调比例改这一个数即可。
+const AI_NOTE_SHARE = 0.25;
+
+// 开瓶时抽一句：AI 句整体只占 AI_NOTE_SHARE，其余从经典句 / 名人名言里抽
 export function fetchNote() {
-  const pool = [...CANNED_CORE, ...library.aiNotes, ...QUOTES];
-  if (!pool.length) return '……';
-  return pool[(Math.random() * pool.length) | 0];
+  if (library.aiNotes.length && Math.random() < AI_NOTE_SHARE) {
+    return library.aiNotes[(Math.random() * library.aiNotes.length) | 0];
+  }
+  const classic = [...CANNED_CORE, ...QUOTES];
+  return classic[(Math.random() * classic.length) | 0];
 }
 
 // 后台扩库：让 AI 写 5 张新字条，验收合格后入库（去重）
