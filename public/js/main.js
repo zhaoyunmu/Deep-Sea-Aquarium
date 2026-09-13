@@ -17,6 +17,7 @@ import { MusicBox, listTracks, BOX_SIZE, BOX_LAND_OFFSET } from './musicbox.js';
 import { Star, generateLastWords } from './star.js';
 import { WhaleStone } from './stone.js';
 import { ClockStone } from './clockstone.js';
+import { playGenesis, armGenesis } from './genesis.js';
 import { AI, ChatPanel, generatePersona, fallbackPersona } from './ai.js';
 import * as UI from './ui.js';
 import { playSfx, prefs, setMusic, setSfx, setMusicVolume, setBoxTrack, boxMusicState } from './audio.js';
@@ -336,6 +337,8 @@ function loadLore() {
   try { return { ...d, ...(JSON.parse(localStorage.getItem(LORE_KEY) || '{}')) }; } catch { return d; }
 }
 let lore = loadLore();
+const LORE_KEYS = ['grown', 'bottle', 'rare', 'bury'];
+function loreCount() { return LORE_KEYS.filter((k) => lore[k]).length; }
 function unlockLore(key, text) {
   if (lore[key]) return; // 每类只触发一次
   lore[key] = true;
@@ -343,11 +346,19 @@ function unlockLore(key, text) {
   const old = jellies.find((j) => j.sp.id === 'jelly-old');
   if (old) old.unlockedCount = (old.unlockedCount || 0) + 1;
   UI.toast(text, true);
+  maybeGenesis();
+}
+// 四条低语集齐 → 上演藏在海底的故事（只自动演一次，之后可在设置里重看）
+function maybeGenesis() {
+  if (lore.genesis || loreCount() < LORE_KEYS.length) return;
+  lore.genesis = true;
+  try { localStorage.setItem(LORE_KEY, JSON.stringify(lore)); } catch { /* 忽略 */ }
+  armGenesis(); // 等所有面板安静下来再开场
 }
 // 加载时，把已保存的解锁数赋给老水母（跨刷新记住进度）
 {
   const _old = jellies.find((j) => j.sp.id === 'jelly-old');
-  if (_old) _old.unlockedCount = Object.values(lore).filter(Boolean).length;
+  if (_old) _old.unlockedCount = loreCount();
 }
 
 async function openBottle(b) {
@@ -616,7 +627,13 @@ el('btn-exit').addEventListener('click', () => {
 el('btn-settings').addEventListener('click', () => {
   syncAudioToggles();
   syncShowNamesToggle();
+  // 四条低语集齐后，设置里多出一个重看序章的入口
+  el('btn-genesis').classList.toggle('hidden', loreCount() < LORE_KEYS.length);
   UI.togglePanel('panel-settings-overlay', true);
+});
+el('btn-genesis').addEventListener('click', () => {
+  UI.togglePanel('panel-settings-overlay', false);
+  playGenesis();
 });
 
 // ---------- 存档槽：手动存档 / 读档（读写实现见 save.js） ----------
@@ -1181,6 +1198,8 @@ window.__tank = {
   spawnFish: (id) => { const sp = SPECIES.find((s) => s.id === id) || SPECIES[0]; const f = new Fish(sp, W * 0.35, H * 0.35); fishes.push(f); return f; },
   spawnBottle: (x, note) => { const b = new Bottle(x ?? rand(W * 0.3, W * 0.7), note ?? null); bottles.push(b); return b; },
   throwFromBackpack,
+  playGenesis,
+  lore: () => lore,
 };
 
 // ---------- 名牌文字宽度缓存（名字几乎不变，不必每帧 measureText） ----------

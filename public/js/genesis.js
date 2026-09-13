@@ -1,0 +1,614 @@
+// ============ 序章：藏在海底的故事 ============
+// 集齐四条「深海的低语」后自动上演的神话终章；之后可在设置里重看（/genesis 也可）。
+// 纯 Canvas 剪影分镜：巨鲸化海 → 澜见证 → 万灵诞生 → 鲸之石 → 漂流瓶 → 交给你。
+
+import { TAU, rand, el } from './util.js';
+import { whaleCall } from './audio.js';
+
+// ---------- 分镜脚本 ----------
+// dur: 秒；sub: 字幕；draw(p, ctx, W, H, t)：p = 本幕进度 0..1，t = 全局秒
+const SCENES = [
+  {
+    dur: 6.5,
+    sub: '很久以前，海比现在更安静。有一个声音，比浪潮还要低……',
+    draw(p, ctx, W, H) {
+      motes(ctx, W, H, 0.35 * p, 0.5);
+    },
+  },
+  {
+    dur: 9,
+    sub: '那是巨鲸的歌。它唱了一千年，海就听了一千年。',
+    enter() { whaleCall(0.3); },
+    draw(p, ctx, W, H) {
+      const s = Math.min(W, H) * 0.42;
+      const x = -s * 1.6 + p * (W + s * 3.2);
+      const y = H * (0.44 + Math.sin(p * 3) * 0.01);
+      backlight(ctx, x, y, s * 2.1, 0.9);
+      songRings(ctx, x - s * 0.9, y, p, 1);
+      whale(ctx, x, y, s, 0.9 - p * 0.15, Math.sin(p * 6) * 0.6);
+      motes(ctx, W, H, 0.5, 0.6);
+    },
+  },
+  {
+    dur: 8.5,
+    sub: '唱完最后一支歌，它缓缓沉了下去。',
+    enter() { whaleCall(0.5, true); },
+    draw(p, ctx, W, H) {
+      const s = Math.min(W, H) * 0.42;
+      const x = W * 0.46 + p * W * 0.05;
+      const y = H * 0.42 + p * H * 0.22;
+      backlight(ctx, x, y, s * 2.0, 0.8 * (1 - p * 0.5));
+      songRings(ctx, x - s * 0.9, y, p, 1 - p * 0.8);
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(p * 0.24);
+      whale(ctx, 0, 0, s, (0.9 - p * 0.55) * (1 - easeIn(p) * 0.3), Math.sin(p * 4) * 0.3 * (1 - p));
+      ctx.restore();
+      motes(ctx, W, H, 0.5, 0.5);
+    },
+  },
+  {
+    dur: 10,
+    sub: '它不是消失了——只是把自己铺成了这片海。',
+    draw(p, ctx, W, H) {
+      const s = Math.min(W, H) * 0.42;
+      const fy = H * 0.8;
+      // 躺在沙床上的鲸，随进度化作沙尘
+      backlight(ctx, W * 0.5, fy - s * 0.15, s * 1.8, 0.7 * Math.max(0, 1 - p * 1.2));
+      ctx.save();
+      ctx.translate(W * 0.5, fy - s * 0.16);
+      ctx.globalAlpha = Math.max(0, 0.85 - p * 1.1);
+      whale(ctx, 0, 0, s, 0.2, 0);
+      ctx.restore();
+      if (p > 0.15 && p < 0.85) dissolveDust(ctx, W * 0.5, fy - s * 0.15, s, p);
+      floor(ctx, W, H, Math.min(1, p * 1.6));
+      kelp(ctx, W, H, fy, Math.min(1, p * 1.2), 6, 0.1);
+      motes(ctx, W, H, 0.5, 0.7);
+    },
+  },
+  {
+    dur: 8.5,
+    sub: '古老的水母看见了这一切。从那天起，她再也没有离开。',
+    draw(p, ctx, W, H) {
+      const fy = H * 0.8;
+      floor(ctx, W, H, 1);
+      kelp(ctx, W, H, fy, 1, 6, 0.1 + p * 0.2);
+      jelly(ctx, W * 0.5, H * (0.95 - p * 0.5), Math.min(W, H) * 0.15, p);
+      motes(ctx, W, H, 0.55, 0.5);
+    },
+  },
+  {
+    dur: 8.5,
+    sub: '后来，小小的灵魂在这里出生、长大、老去，再化作星辰。',
+    draw(p, ctx, W, H, t) {
+      const fy = H * 0.8;
+      floor(ctx, W, H, 1);
+      kelp(ctx, W, H, fy, 1, 7, 0.3);
+      eggs(ctx, W, fy, p);
+      littleFish(ctx, W, H, fy, p, t);
+      jelly(ctx, W * 0.16, H * 0.45 + Math.sin(t * 0.5) * 8, Math.min(W, H) * 0.08, 1);
+      motes(ctx, W, H, 0.55, 0.6);
+    },
+  },
+  {
+    dur: 9,
+    sub: '临别前，它把最后的智慧刻进一块石碑——等一句真话，将它唤醒。',
+    draw(p, ctx, W, H, t) {
+      const fy = H * 0.8;
+      floor(ctx, W, H, 1);
+      kelp(ctx, W, H, fy, 1, 7, 0.3);
+      whaleStone(ctx, W * 0.62, fy + 6, Math.min(W, H) * 0.155, p, t);
+      motes(ctx, W, H, 0.5, 0.55);
+    },
+  },
+  {
+    dur: 7.5,
+    sub: '而有些瓶子，装着不是墨水写就的话。',
+    draw(p, ctx, W, H) {
+      const fy = H * 0.8;
+      floor(ctx, W, H, 1);
+      kelp(ctx, W, H, fy, 1, 7, 0.3);
+      whaleStone(ctx, W * 0.62, fy + 6, Math.min(W, H) * 0.155, 1, 0);
+      bottles(ctx, W, H, fy, p);
+      motes(ctx, W, H, 0.55, 0.6);
+    },
+  },
+  {
+    dur: 9.5,
+    sub: '这片海，现在交给你了。',
+    title: true,
+    draw(p, ctx, W, H) {
+      motes(ctx, W, H, 0.4 * (1 - p), 0.4);
+      // 标题随字幕浮现，收尾前再归于暗
+      const a = p < 0.12 ? p / 0.12 : p > 0.8 ? (1 - p) / 0.2 : 1;
+      titleCard(ctx, W, H, a);
+    },
+  },
+];
+
+const TOTAL = SCENES.reduce((a, s) => a + s.dur, 0);
+const FONT = 'Georgia, "Noto Serif SC", "STSong", "SimSun", serif';
+
+// ---------- 形状库 ----------
+
+// 背光：鲸身后方一片微亮的水光，让剪影从暗背景里浮出来
+function backlight(ctx, x, y, r, a) {
+  if (a <= 0.01) return;
+  const g = ctx.createRadialGradient(x, y, r * 0.08, x, y, r);
+  g.addColorStop(0, `rgba(88,150,200,${0.22 * a})`);
+  g.addColorStop(0.55, `rgba(50,95,140,${0.10 * a})`);
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(x - r, y - r, r * 2, r * 2);
+}
+
+// 巨鲸剪影：与世界鲸影同一套连续轮廓（身+尾一线，后段随摆尾渐进弯曲）
+function whale(ctx, x, y, s, alpha, stroke) {  const bendStart = -s * 0.25, rearLen = s * 1.15, maxBend = stroke * 0.18;
+  const bendPt = (px, py) => {
+    if (px >= bendStart) return [px, py];
+    const tt = Math.min(1, (bendStart - px) / rearLen);
+    const a = maxBend * Math.pow(tt, 1.3);
+    const dx = px - bendStart;
+    return [bendStart + dx * Math.cos(a) - py * Math.sin(a), dx * Math.sin(a) + py * Math.cos(a)];
+  };
+  const pts = [[s * 1.08, s * 0.02]];
+  const quad = (x0, y0, cx, cy, x1, y1, n = 14) => {
+    for (let i = 1; i <= n; i++) {
+      const u = i / n, iu = 1 - u;
+      pts.push([iu * iu * x0 + 2 * iu * u * cx + u * u * x1, iu * iu * y0 + 2 * iu * u * cy + u * u * y1]);
+    }
+  };
+  quad(s * 1.08, s * 0.02, s * 0.55, -s * 0.44, -s * 0.3, -s * 0.32);
+  quad(-s * 0.3, -s * 0.32, -s * 0.68, -s * 0.2, -s * 0.8, -s * 0.075);
+  quad(-s * 0.8, -s * 0.075, -s * 1.0, -s * 0.13, -s * 1.16, -s * 0.28);
+  quad(-s * 1.16, -s * 0.28, -s * 1.06, -s * 0.14, -s * 0.99, -s * 0.015);
+  quad(-s * 0.99, -s * 0.015, -s * 1.06, s * 0.12, -s * 1.16, s * 0.26);
+  quad(-s * 1.16, s * 0.26, -s * 1.0, s * 0.11, -s * 0.8, s * 0.07);
+  quad(-s * 0.8, s * 0.07, -s * 0.55, s * 0.2, -s * 0.18, s * 0.32);
+  quad(-s * 0.18, s * 0.32, s * 0.45, s * 0.4, s * 1.08, s * 0.02);
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.globalAlpha = alpha;
+  ctx.beginPath();
+  pts.forEach(([px, py], i) => {
+    const [bx, by] = bendPt(px, py);
+    i === 0 ? ctx.moveTo(bx, by) : ctx.lineTo(bx, by);
+  });
+  ctx.closePath();
+  ctx.fillStyle = '#030c17';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(140,210,245,0.32)';
+  ctx.lineWidth = Math.max(1.5, s * 0.008);
+  ctx.stroke();
+  // 腹部受光（比世界鲸影略亮，剪影才读得出体积）
+  ctx.save();
+  ctx.globalAlpha = alpha * 0.12;
+  ctx.fillStyle = '#9fd4ee';
+  ctx.beginPath();
+  ctx.moveTo(s * 0.9, s * 0.1);
+  ctx.quadraticCurveTo(s * 0.3, s * 0.42, -s * 0.3, s * 0.3);
+  ctx.quadraticCurveTo(s * 0.3, s * 0.34, s * 0.9, s * 0.1);
+  ctx.fill();
+  ctx.restore();
+  ctx.restore();
+}
+
+// 歌声涟漪：从鲸头前方一圈圈荡开
+function songRings(ctx, x, y, p, str) {
+  if (str <= 0.02) return;
+  for (let i = 0; i < 3; i++) {
+    const rp = ((p * 2.2 + i / 3) % 1);
+    ctx.save();
+    ctx.globalAlpha = (1 - rp) * 0.22 * str;
+    ctx.strokeStyle = '#8fd8f5';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(x, y, 20 + rp * 150, 0, TAU);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+// 海床：一条微微起伏的亮边 + 下方渐暗
+function floor(ctx, W, H, a) {
+  if (a <= 0) return;
+  const fy = H * 0.8;
+  ctx.save();
+  ctx.globalAlpha = a;
+  const g = ctx.createLinearGradient(0, fy, 0, H);
+  g.addColorStop(0, '#0a1626');
+  g.addColorStop(1, '#02060d');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(0, H);
+  ctx.lineTo(0, fy + 6);
+  for (let x = 0; x <= W; x += 70) {
+    ctx.quadraticCurveTo(x + 35, fy + Math.sin(x * 0.011 + 3) * 8, x + 70, fy + Math.sin(x * 0.02) * 5);
+  }
+  ctx.lineTo(W, H);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(120,190,230,0.14)';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  for (let x = 0; x <= W; x += 70) {
+    const y = fy + Math.sin(x * 0.02) * 5;
+    x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+// 海草剪影：几株摇摆的叶带
+function kelp(ctx, W, H, fy, a, n, sway) {
+  if (a <= 0) return;
+  ctx.save();
+  ctx.globalAlpha = a * 0.8;
+  ctx.strokeStyle = '#07203a';
+  ctx.lineCap = 'round';
+  for (let i = 0; i < n; i++) {
+    const x = ((i + 0.5) / n) * W + Math.sin(i * 7.3) * 30;
+    const h = H * (0.1 + (i % 3) * 0.05);
+    const ph = i * 1.7;
+    ctx.lineWidth = 5 - (i % 2);
+    ctx.beginPath();
+    ctx.moveTo(x, fy + 8);
+    ctx.bezierCurveTo(
+      x + Math.sin(ph + sway * 2) * 14, fy - h * 0.4,
+      x - Math.sin(ph * 1.3 + sway * 2.4) * 18, fy - h * 0.75,
+      x + Math.sin(ph + sway * 3) * 22, fy - h,
+    );
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// 澜：巨大水母的剪影，伞盖呼吸 + 长须飘垂
+function jelly(ctx, x, y, r, glow) {
+  ctx.save();
+  ctx.translate(x, y);
+  // 体光
+  const lg = ctx.createRadialGradient(0, 0, r * 0.2, 0, 0, r * 2.4);
+  lg.addColorStop(0, `rgba(150,220,255,${0.14 * glow})`);
+  lg.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = lg;
+  ctx.fillRect(-r * 2.6, -r * 2.6, r * 5.2, r * 5.2);
+  // 长须
+  ctx.strokeStyle = 'rgba(150,215,250,0.35)';
+  ctx.lineWidth = 1.6;
+  for (let i = 0; i < 7; i++) {
+    const ox = (i - 3) * r * 0.24;
+    ctx.beginPath();
+    ctx.moveTo(ox, r * 0.15);
+    ctx.bezierCurveTo(
+      ox + Math.sin(i * 2.1) * r * 0.2, r * 1.1,
+      ox - Math.sin(i * 1.3) * r * 0.25, r * 2.0,
+      ox + Math.sin(i * 0.9) * r * 0.3, r * 2.9,
+    );
+    ctx.stroke();
+  }
+  // 伞盖（呼吸）
+  const pulse = 1 + Math.sin(performance.now() / 900) * 0.05;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, r * pulse, r * 0.72 * pulse, 0, Math.PI, 0);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(9,28,48,0.92)';
+  ctx.fill();
+  ctx.strokeStyle = `rgba(160,225,255,${0.4 * glow})`;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  // 伞缘微光
+  ctx.beginPath();
+  ctx.ellipse(0, 0, r * pulse, r * 0.72 * pulse, 0, Math.PI, 0);
+  ctx.strokeStyle = `rgba(190,240,255,${0.18 * glow})`;
+  ctx.stroke();
+  ctx.restore();
+}
+
+// 卵：沙床上一排微微发光的小圆
+function eggs(ctx, W, fy, p) {
+  for (let i = 0; i < 5; i++) {
+    const x = W * (0.3 + i * 0.09) + Math.sin(i * 5.1) * 20;
+    const tw = 0.5 + 0.5 * Math.sin(p * 9 + i * 1.9);
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, p * 2) * (0.35 + tw * 0.3);
+    ctx.fillStyle = '#bfeaff';
+    ctx.beginPath();
+    ctx.arc(x, fy - 6, 4.5, 0, TAU);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+// 小鱼群：剪影穿梭
+function littleFish(ctx, W, H, fy, p, t) {
+  for (let i = 0; i < 9; i++) {
+    const sp = 60 + (i % 3) * 30;
+    const x = ((p * sp + i * 173) % (W + 80)) - 40;
+    const y = H * (0.3 + ((i * 0.37) % 0.42)) + Math.sin(t * 1.2 + i) * 10;
+    const dir = (i % 2) * 2 - 1;
+    const s = 7 + (i % 3) * 3;
+    ctx.save();
+    ctx.globalAlpha = 0.85;
+    ctx.translate(x, y);
+    ctx.scale(dir, 1);
+    ctx.fillStyle = '#0a2136';
+    ctx.strokeStyle = 'rgba(150,210,245,0.4)';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, s, s * 0.38, 0, 0, TAU);
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-s, 0);
+    ctx.lineTo(-s * 1.6, -s * 0.34);
+    ctx.lineTo(-s * 1.6, s * 0.34);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+// 鲸之石：从沙里升起的石碑，鲸纹渐渐刻亮
+function whaleStone(ctx, x, fy, s, p, t) {
+  const h = s * 1.28, w = s;
+  const y = fy + h * 0.18 - Math.min(1, p * 1.4) * h * 0.34;
+  const lit = p > 0.35;
+  ctx.save();
+  ctx.translate(x, y);
+  // 点亮时照亮周围
+  if (lit) {
+    const lg = ctx.createRadialGradient(0, -h * 0.18, 6, 0, -h * 0.18, s * 2.2);
+    lg.addColorStop(0, `rgba(111,227,255,${0.14 * Math.min(1, (p - 0.35) * 2)})`);
+    lg.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = lg;
+    ctx.fillRect(-s * 2.4, -h * 1.6, s * 4.8, h * 2.6);
+  }
+  const g = ctx.createLinearGradient(0, -h / 2, 0, h / 2);
+  g.addColorStop(0, 'rgba(26,50,66,0.97)');
+  g.addColorStop(1, 'rgba(6,17,28,0.99)');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.roundRect(-w / 2, -h / 2, w, h, [s * 0.17, s * 0.18, s * 0.07, s * 0.06]);
+  ctx.fill();
+  ctx.strokeStyle = lit ? 'rgba(160,240,255,.3)' : 'rgba(140,180,210,.16)';
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+  // 一笔鲸纹（与世界鲸之石同一道刻痕）
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(-w / 2 + 5, -h / 2 + 5, w - 10, h - 10, [s * 0.13]);
+  ctx.clip();
+  const k = (w - 26) / 104;
+  ctx.translate(-55 * k, -34 * k - h * 0.06);
+  ctx.scale(k, k);
+  ctx.lineWidth = 2.4;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  if (lit) {
+    ctx.shadowColor = 'rgba(111,227,255,.9)';
+    ctx.shadowBlur = 9;
+  }
+  ctx.strokeStyle = lit ? `rgba(190,245,255,${0.55 + Math.sin(t * 1.5) * 0.15})` : 'rgba(165,200,225,.38)';
+  ctx.beginPath();
+  engraving(ctx);
+  ctx.stroke();
+  ctx.restore();
+  ctx.restore();
+}
+
+// 鲸纹的一笔成形路径（stone.js 同款坐标）
+function engraving(ctx) {
+  ctx.moveTo(46, 26);
+  ctx.bezierCurveTo(40, 14, 24, 12, 15, 22);
+  ctx.bezierCurveTo(8, 30, 9, 40, 17, 45);
+  ctx.bezierCurveTo(26, 51, 38, 50, 46, 43);
+  ctx.bezierCurveTo(51, 47, 58, 48, 64, 45);
+  ctx.bezierCurveTo(70, 50, 79, 51, 86, 47);
+  ctx.bezierCurveTo(80, 56, 68, 60, 56, 58);
+  ctx.bezierCurveTo(40, 62, 18, 58, 10, 44);
+  ctx.bezierCurveTo(4, 32, 12, 18, 30, 15);
+  ctx.bezierCurveTo(40, 14, 48, 17, 52, 22);
+}
+
+// 漂流瓶：斜斜下沉，瓶腹里一点暖光
+function bottles(ctx, W, H, fy, p) {
+  const defs = [
+    { x: 0.24, t: 0.0, sp: 0.55 }, { x: 0.55, t: 0.3, sp: 0.5 }, { x: 0.8, t: 0.55, sp: 0.6 },
+  ];
+  for (const d of defs) {
+    const lp = Math.max(0, Math.min(1, (p - d.t) / d.sp));
+    if (lp <= 0) continue;
+    const x = W * d.x + Math.sin(lp * 5 + d.t * 9) * 14;
+    const y = lp * (fy - 40) + 30;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(0.5 + d.t);
+    const a = Math.min(1, lp * 3);
+    // 瓶腹
+    ctx.globalAlpha = a;
+    ctx.fillStyle = 'rgba(16,36,54,0.95)';
+    ctx.beginPath();
+    ctx.roundRect(-9, -16, 18, 32, 7);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(140,190,225,0.35)';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    // 瓶颈 + 塞
+    ctx.fillStyle = 'rgba(16,36,54,0.95)';
+    ctx.fillRect(-4, -26, 8, 11);
+    ctx.fillStyle = 'rgba(120,90,60,0.8)';
+    ctx.fillRect(-4.5, -30, 9, 5);
+    // 瓶中的字条微光
+    const tw = 0.6 + 0.4 * Math.sin(p * 7 + d.t * 11);
+    ctx.fillStyle = `rgba(255,233,176,${0.5 * tw})`;
+    ctx.beginPath();
+    ctx.arc(0, -2, 4.5, 0, TAU);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+// 化尘：鲸身散出的上浮微粒
+function dissolveDust(ctx, x, y, s, p) {
+  const n = 40;
+  ctx.save();
+  ctx.fillStyle = 'rgba(190,220,240,0.5)';
+  for (let i = 0; i < n; i++) {
+    const seed = i * 12.9898;
+    const ox = Math.sin(seed) * s * 0.9;
+    const oy = Math.cos(seed * 1.7) * s * 0.22;
+    const rise = ((p - 0.15) * (60 + (i % 7) * 30)) % (s * 0.5);
+    ctx.globalAlpha = 0.5 * (1 - p) * (0.4 + (i % 5) / 8);
+    ctx.beginPath();
+    ctx.arc(x + ox, y + oy - rise, 1.6 + (i % 3) * 0.7, 0, TAU);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// 悬浮微尘：整段的底色粒子（比例坐标，窗口变化也不乱）
+let MOTES = [];
+function seedMotes() {
+  MOTES = Array.from({ length: 70 }, () => ({
+    x: Math.random(), y: Math.random(), r: rand(0.6, 2.2),
+    vy: rand(0.004, 0.016), vx: rand(-0.008, 0.008), ph: rand(0, TAU),
+  }));
+}
+function motes(ctx, W, H, a, drift) {
+  if (a <= 0.01) return;
+  ctx.save();
+  ctx.fillStyle = '#cfe8f7';
+  const t = performance.now() / 1000;
+  for (const m of MOTES) {
+    const y = ((m.y - t * m.vy * drift) % 1 + 1) % 1;
+    const x = (m.x + t * m.vx * drift % 1 + 1) % 1;
+    ctx.globalAlpha = a * (0.25 + 0.3 * Math.sin(t + m.ph));
+    ctx.beginPath();
+    ctx.arc(x * W, y * H, m.r, 0, TAU);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// 尾幕标题
+function titleCard(ctx, W, H, a) {
+  ctx.save();
+  ctx.globalAlpha = a;
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(127,168,189,0.85)';
+  ctx.font = `${Math.round(13 * uiScale(W))}px ${FONT}`;
+  ctx.fillText('D E E P   ·   S E A   ·   A Q U A R I U M', W / 2, H * 0.42);
+  ctx.fillStyle = 'rgba(215,240,252,0.95)';
+  ctx.font = `${Math.round(64 * uiScale(W))}px ${FONT}`;
+  ctx.fillText('万 灵 缸', W / 2, H * 0.54);
+  ctx.restore();
+}
+function uiScale(W) { return Math.max(0.9, Math.min(1.7, W / 1250)); }
+
+const easeIn = (p) => p * p;
+
+// ---------- 播放器 ----------
+
+let playing = false;
+
+function fitCanvas(cv) {
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  cv.width = innerWidth * dpr;
+  cv.height = innerHeight * dpr;
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return ctx;
+}
+
+export function playGenesis() {
+  if (playing) return;
+  playing = true;
+  const ov = el('genesis-overlay');
+  const cv = el('genesis-canvas');
+  ov.classList.remove('hidden');
+  ov.style.opacity = '1';
+  seedMotes();
+
+  const ctx = fitCanvas(cv);
+  let raf = 0;
+  let start = performance.now();
+  let entered = -1;   // 已触发 enter 的分镜序号
+  let ending = false;
+
+  const finish = () => {
+    if (ending) return;
+    ending = true;
+    cancelAnimationFrame(raf);
+    ov.style.opacity = '0';
+    setTimeout(() => { ov.classList.add('hidden'); playing = false; }, 900);
+  };
+
+  const onSkip = (e) => { e.stopPropagation(); finish(); };
+  ov.addEventListener('click', onSkip, { once: true });
+  const onKey = (e) => { if (e.key === 'Escape' || e.key === ' ') finish(); };
+  window.addEventListener('keydown', onKey, { once: true });
+
+  const frame = (now) => {
+    const t = (now - start) / 1000;
+    // 结尾淡出
+    if (t > TOTAL) { finish(); return; }
+    const fadeOut = t > TOTAL - 1.2 ? (TOTAL - t) / 1.2 : 1;
+    const fadeIn = Math.min(1, t / 2);
+
+    // 背景深海渐变
+    ctx.clearRect(0, 0, innerWidth, innerHeight);
+    const bg = ctx.createLinearGradient(0, 0, 0, innerHeight);
+    bg.addColorStop(0, '#04101f');
+    bg.addColorStop(0.55, '#03101d');
+    bg.addColorStop(1, '#010509');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, innerWidth, innerHeight);
+
+    // 找到当前分镜
+    let acc = 0, idx = 0;
+    for (let i = 0; i < SCENES.length; i++) {
+      if (t < acc + SCENES[i].dur) { idx = i; break; }
+      acc += SCENES[i].dur;
+    }
+    const sc = SCENES[idx];
+    if (entered !== idx) { entered = idx; sc.enter && sc.enter(); }
+    const p = (t - acc) / sc.dur;
+
+    ctx.save();
+    ctx.globalAlpha = fadeOut * fadeIn;
+    sc.draw(p, ctx, innerWidth, innerHeight, t);
+
+    // 字幕：本幕后 40% 处淡入，幕尾淡出（末幕标题除外，字幕靠后居中）
+    const subA = p < 0.18 ? p / 0.18 : p > 0.86 ? (1 - p) / 0.14 : 1;
+    if (sc.sub) {
+      ctx.globalAlpha = fadeOut * fadeIn * Math.max(0, subA);
+      ctx.textAlign = 'center';
+      ctx.font = `${Math.round(19 * uiScale(innerWidth))}px ${FONT}`;
+      ctx.fillStyle = 'rgba(205,228,242,0.92)';
+      ctx.shadowColor = 'rgba(0,10,20,0.9)';
+      ctx.shadowBlur = 8;
+      ctx.fillText(sc.sub, innerWidth / 2, innerHeight * 0.9);
+    }
+    ctx.restore();
+
+    if (!ending) raf = requestAnimationFrame(frame);
+  };
+  raf = requestAnimationFrame(frame);
+}
+
+// 自动触发：等所有面板都关上的「安静时刻」再开场（最多等 90 秒，否则放弃，可手动重看）
+export function armGenesis() {
+  const quiet = () => !document.querySelector('.overlay:not(.hidden)');
+  let waited = 0;
+  const iv = setInterval(() => {
+    waited += 0.8;
+    if (quiet()) {
+      clearInterval(iv);
+      setTimeout(playGenesis, 1600);
+    } else if (waited > 90) {
+      clearInterval(iv);
+    }
+  }, 800);
+}

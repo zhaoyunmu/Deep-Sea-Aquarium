@@ -203,6 +203,12 @@
     </div>
   </div>
 
+  <!-- 序章 · 藏在海底的故事（集齐四条低语后上演） -->
+  <div id="genesis-overlay" class="overlay hidden">
+    <canvas id="genesis-canvas"></canvas>
+    <p class="genesis-skip">轻触任意处 · 跳过</p>
+  </div>
+
   <!-- 星辰纪念 -->
   <div id="star-overlay" class="overlay hidden">
     <div class="overlay-card star-card">
@@ -237,6 +243,7 @@
         </label>
       </div>
       <div class="settings-actions">
+        <button id="btn-genesis" class="exit-btn hidden" title="重看那段藏在海底的故事">🐋 序章</button>
         <button id="btn-export" class="exit-btn" title="把整缸进度导出成一个文件——可以备份，也可以发给朋友">📤 导出存档</button>
         <button id="btn-import" class="exit-btn" title="从存档文件恢复整缸进度">📥 导入存档</button>
         <input type="file" id="import-file" accept=".json,application/json" class="hidden">

@@ -77,6 +77,7 @@ node server.js
 | `/farewell <鱼的名字>` | 让指定鱼进入弥留（大限将至） |
 | `/list` | 列出缸里的鱼（名字/物种/年龄） |
 | `/star [名字]` | 降一颗星辰（测试用） |
+| `/genesis` | 重演藏在海底的故事（神话序章动画，别名 神话/序章） |
 | `/save` | 立刻保存进度 |
 
 实现见 `public/js/commands.js`。想扩展新指令，往 `COMMANDS` 数组里加一条即可（`name / alias / usage / desc / run(arg, T)`），`T` 就是 `window.__tank`。

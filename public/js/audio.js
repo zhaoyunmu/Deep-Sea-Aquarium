@@ -136,6 +136,13 @@ export function playSfx(name) {
   try { SFX[name] && SFX[name](); } catch { /* 忽略 */ }
 }
 
+// ---- 鲸鸣（序章专用）：悠远的两声低吟，走音乐总线，受音乐开关与音量控制 ----
+export function whaleCall(delay = 0, soft = false) {
+  const g = soft ? 0.12 : 0.2;
+  tone({ freq: 88, endFreq: 150, dur: 2.6, type: 'sine', gain: g, attack: 0.7, delay, music: true });
+  tone({ freq: 150, endFreq: 62, dur: 3.0, type: 'sine', gain: g * 0.8, attack: 1.3, delay: delay + 2.4, music: true });
+}
+
 // ---- 深海氛围音景（合成）----
 function buildAmbience() {
   const c = ensureCtx();

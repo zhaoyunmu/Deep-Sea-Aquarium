@@ -251,6 +251,14 @@ export const COMMANDS = [
     },
   },
   {
+    name: 'genesis', alias: ['神话', '序章'], usage: '/genesis', desc: '重演藏在海底的故事（神话序章动画）',
+    run(_, T) {
+      if (!T.playGenesis) return { ok: false, msg: '序章模块没有加载' };
+      T.playGenesis();
+      return { ok: true, msg: '……海开始讲那个古老的故事了' };
+    },
+  },
+  {
     name: 'save', alias: ['存档'], usage: '/save', desc: '立刻保存进度',
     run(_, T) {
       T.saveFish();
