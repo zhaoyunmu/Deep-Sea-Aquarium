@@ -49,6 +49,7 @@ export class MusicBox {
     this.phase = rand(0, TAU);
     this.landed = false;
     this.opened = false; // 与瓶子一致的「已被拾起」标记
+    this.fav = false;    // 收藏过的盒子：回收时回到收藏夹（盒子本来就不陷沙）
     this.onLanded = null;
   }
 

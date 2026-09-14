@@ -384,9 +384,9 @@ async function openBottle(b) {
   const core = b.note ?? fetchNote(takenNoteKeys());
   const note = core.startsWith('「') ? core : `「${core}」`;
   el('bottle-text').textContent = note;
-  // 收进背包，记录时间
-  collection.addToBackpack({ id: `bp${Date.now()}${Math.floor(Math.random() * 999)}`, type: 'bottle', note: core, time: Date.now() });
-  UI.toast('🧴 漂流瓶已收进背包');
+  // 收进背包，记录时间（收藏过的捞回来直接回收藏夹）
+  collection.addToBackpack({ id: `bp${Date.now()}${Math.floor(Math.random() * 999)}`, type: 'bottle', note: core, time: Date.now(), fav: !!b.fav });
+  UI.toast(b.fav ? '🧴 漂流瓶已回到收藏夹' : '🧴 漂流瓶已收进背包');
   unlockLore('bottle', '🌊 深海的低语：有些话，沉得比石头还深。');
   // AI 在后台扩充句库（验收合格才入库；刚收下的这句也不让 AI 重复写）
   maybeEnrich(takenNoteKeys());
@@ -417,8 +417,9 @@ async function openStar(st) {
     note: st.note || '',
     meta: info,
     time: Date.now(),
+    fav: !!st.fav,
   });
-  UI.toast('⭐ 星辰已收进背包，它会替它记得');
+  UI.toast(st.fav ? '⭐ 星辰已回到收藏夹，它会替它记得' : '⭐ 星辰已收进背包，它会替它记得');
 }
 
 // ---------- 音乐盒：每只绑定一首曲子，在海里就单曲循环，收回背包即静 ----------
@@ -474,9 +475,12 @@ function collectBox(b) {
     src: b.track.src,
     cover: b.track.cover ?? null,
     time: Date.now(),
+    fav: !!b.fav,
   });
   syncBoxMusic(); // 背包空了或前一只接棒，音乐自动切换
-  UI.toast(`🎵 《${b.track.name}》音乐盒已收进背包，海面恢复了平日的声音`);
+  UI.toast(b.fav
+    ? `🎵 《${b.track.name}》已回到收藏夹，海面恢复了平日的声音`
+    : `🎵 《${b.track.name}》音乐盒已收进背包，海面恢复了平日的声音`);
   // 曲目收齐：海里不会再自然漂来音乐盒了，给个收尾
   const inBag = collectedTrackKeys();
   if (boxTracks.length && boxTracks.every((t) => inBag.has(trackKey(t)))) {
@@ -983,7 +987,7 @@ function renderBackpack() {
   el('btn-empty-trash').classList.toggle('hidden', backpackView !== 'trash' || trash.length === 0);
   el('backpack-foot').textContent = {
     main: '按住拖到海里放飞 · ✏️ 改写话语 · ♡ 收藏进收藏夹',
-    fav: '收藏夹里存着你的收集 · 不会因为你手滑而消失',
+    fav: '收藏的物件扔回海里也不会消失 · 捞回来还回收藏夹',
     trash: '♻ 可恢复 · 「永久删除」不可找回',
   }[backpackView];
   el('backpack-count').textContent = {
@@ -1169,33 +1173,39 @@ function endBottleDrag(e) {
 
 function throwFromBackpack(item, x, y) {
   collection.removeFromBackpack(item.id);
+  // 收藏过的物件带着标记入海：不会陷沙/熄灭，捞回来也回到收藏夹
+  const fav = !!item.fav;
+  const keep = fav ? '（已收藏 · 会一直留在这片海里）' : '';
   if (item.type === 'box') {
     const mb = new MusicBox(clamp(x, 30, W - 30), { name: item.name, src: item.src, cover: item.cover ?? null });
     mb.y = clamp(y, 24, world.floorY - 20);
     mb.vy = 26;
+    mb.fav = fav;
     boxes.push(mb);
     syncBoxMusic(); // 盒子一入水，曲子就替代背景乐
     ripples.push({ x: mb.x, y: mb.y, r: 6, life: 0 });
-    UI.toast(`🎵 《${item.name}》音乐盒又开始奏乐了`);
+    UI.toast(`🎵 《${item.name}》音乐盒又开始奏乐了${keep}`);
     return;
   }
   if (item.type === 'star') {
     const st = new Star(clamp(x, 30, W - 30), item.meta || { name: '无名' }, item.note || null);
     st.y = clamp(y, 24, world.floorY - 20);
     st.vy = 26;
+    st.fav = fav;
     st.onLanded = () => UI.toast('⭐ 星星静静躺在沙床上，照亮一小片海');
     stars.push(st);
     ripples.push({ x: st.x, y: st.y, r: 6, life: 0 });
-    UI.toast('⭐ 星辰重新回到了海里');
+    UI.toast(`⭐ 星辰重新回到了海里${keep}`);
     return;
   }
   const b = new Bottle(clamp(x, 30, W - 30), item.note);
   b.y = clamp(y, 24, world.floorY - 24);
   b.vy = 30;
+  b.fav = fav;
   b.onLanded = () => UI.toast('瓶子轻轻落在了沙床上…');
   bottles.push(b);
   ripples.push({ x: b.x, y: b.y, r: 6, life: 0 });
-  UI.toast('🧴 漂流瓶重新回到了海里');
+  UI.toast(`🧴 漂流瓶重新回到了海里${keep}`);
 }
 
 // ---------- 环境状态 chip ----------
@@ -1285,6 +1295,27 @@ function swirlAttract(entities, fishes, dt, o) {
       }
     }
   }
+}
+
+// 收藏过的物件在海里不会消失：顶上浮一枚小心标，一眼看出哪些是留着的
+function drawFavMarks(ctx, t) {
+  const kept = [];
+  for (const b of bottles) if (b.fav) kept.push(b);
+  for (const s of stars) if (s.fav) kept.push(s);
+  for (const b of boxes) if (b.fav) kept.push(b);
+  if (!kept.length) return;
+  const a = 0.55 + 0.25 * Math.sin(t * 1.6);
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = '15px "Microsoft YaHei", sans-serif';
+  ctx.shadowColor = 'rgba(255,110,155,0.85)';
+  ctx.shadowBlur = 7;
+  ctx.fillStyle = `rgba(255,196,212,${a})`;
+  for (const e of kept) {
+    ctx.fillText('♥', e.x, e.y - (e.landed ? 30 : 24) + Math.sin(t * 1.6 + e.x * 0.02) * 2);
+  }
+  ctx.restore();
 }
 
 // ---------- 主循环 ----------
@@ -1484,6 +1515,7 @@ function tick(now) {
   for (const b of bottles) b.draw(ctx, t, env);
   for (const st of stars) st.draw(ctx, t);
   for (const b of boxes) b.draw(ctx, t, env, boxes[boxes.length - 1] === b);
+  drawFavMarks(ctx, t);
   sparkles.draw(ctx);
   world.drawMid(ctx, t, env);
 

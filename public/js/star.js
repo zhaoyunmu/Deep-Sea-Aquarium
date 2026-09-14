@@ -27,6 +27,7 @@ export class Star {
     this.phase = rand(0, TAU);
     this.landed = false;
     this.opened = false;
+    this.fav = false; // 收藏过的星辰：永不熄灭
     this.age = 0; // 落底后的天数，3 天后熄灭
     this.onLanded = null;
   }
@@ -44,6 +45,8 @@ export class Star {
         this.y = world.floorY - 8;
         if (this.onLanded) this.onLanded();
       }
+    } else if (this.fav) {
+      this.age = 0; // 收藏过的星星不熄灭（重新放回海里的也重新亮起）
     } else {
       this.age += dt / DAY_SECONDS; // 停留三天后熄灭
     }

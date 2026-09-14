@@ -83,9 +83,9 @@ export function buildSnapshot(state) {
       fireDusk: weather.fireDusk,
       dayCount: weather.dayCount,
     },
-    bottles: bottles.map((b) => ({ x: Math.round(b.x), y: Math.round(b.y), landed: b.landed, note: b.note ?? null, sandAge: b.sandAge })),
-    stars: stars.map((s) => ({ x: Math.round(s.x), y: Math.round(s.y), landed: s.landed, info: s.info, note: s.note ?? null, age: s.age })),
-    boxes: boxes.map((b) => ({ x: Math.round(b.x), y: Math.round(b.y), landed: b.landed, track: b.track })),
+    bottles: bottles.map((b) => ({ x: Math.round(b.x), y: Math.round(b.y), landed: b.landed, note: b.note ?? null, sandAge: b.sandAge, fav: !!b.fav })),
+    stars: stars.map((s) => ({ x: Math.round(s.x), y: Math.round(s.y), landed: s.landed, info: s.info, note: s.note ?? null, age: s.age, fav: !!s.fav })),
+    boxes: boxes.map((b) => ({ x: Math.round(b.x), y: Math.round(b.y), landed: b.landed, track: b.track, fav: !!b.fav })),
   };
 }
 
@@ -152,6 +152,7 @@ export function applyPendingRestore(ctx) {
       nb.landed = !!b.landed;
       nb.sandAge = b.sandAge ?? 0;
       nb.bury = clamp(nb.sandAge, 0, 1);
+      nb.fav = !!b.fav;
       bottles.push(nb);
     }
   }
@@ -161,6 +162,7 @@ export function applyPendingRestore(ctx) {
       ns.y = s.landed ? world.floorY - 8 : Math.min(s.y ?? 0, world.floorY - 20);
       ns.landed = !!s.landed;
       ns.age = s.age ?? 0;
+      ns.fav = !!s.fav;
       stars.push(ns);
     }
   }
@@ -170,6 +172,7 @@ export function applyPendingRestore(ctx) {
       const nb = new MusicBox(clamp(b.x, 20, world.w - 20), b.track);
       nb.y = b.landed ? world.floorY - BOX_LAND_OFFSET : Math.min(b.y ?? 0, world.floorY - BOX_LAND_OFFSET - 6);
       nb.landed = !!b.landed;
+      nb.fav = !!b.fav;
       boxes.push(nb);
     }
   }

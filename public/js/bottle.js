@@ -180,6 +180,7 @@ export class Bottle {
     this.landed = false;
     this.opened = false;
     this.note = note;      // 背包里拿出来的瓶子自带字条
+    this.fav = false;      // 收藏过的瓶子：永不陷沙，海水一直留着它
     this.sandAge = 0;      // 落底后经过的天数
     this.bury = 0;         // 0=崭新 1=完全被沙掩埋
     this.onLanded = null;
@@ -201,6 +202,8 @@ export class Bottle {
         this.y = world.floorY - 10;
         if (this.onLanded) this.onLanded();
       }
+    } else if (this.fav) {
+      this.bury = 0; // 收藏过的瓶子不陷沙（从沙里救回来的也会重新变新）
     } else {
       // 一天过后完全没入沙中
       this.sandAge += dt / DAY_SECONDS;
