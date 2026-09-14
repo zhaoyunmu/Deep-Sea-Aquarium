@@ -46,6 +46,14 @@ const NOTES_KEY = 'wanling.notes.v1';
 const NOTE_CAP = 60;
 const library = { aiNotes: [], enriching: false };
 
+// 语录身份：去掉首尾引号与空白再比（玩家改过字的句子就算新句子，原文可以再抽到）
+export function noteKey(s) {
+  return (s || '').trim().replace(/^[「『"'“”]+/, '').replace(/[」』"'“”]+$/, '').trim();
+}
+
+// 经典句 / 名人名言（抽句子时的固定池子）
+const CLASSIC = [...CANNED_CORE, ...QUOTES];
+
 function loadAiNotes() {
   try {
     const raw = localStorage.getItem(NOTES_KEY);
@@ -118,18 +126,22 @@ export async function generateNote() {
 // 句库再多 AI 句也不喧宾夺主。想调比例改这一个数即可。
 const AI_NOTE_SHARE = 0.25;
 
-// 开瓶时抽一句：AI 句整体只占 AI_NOTE_SHARE，其余从经典句 / 名人名言里抽
-export function fetchNote() {
-  if (library.aiNotes.length && Math.random() < AI_NOTE_SHARE) {
-    return library.aiNotes[(Math.random() * library.aiNotes.length) | 0];
+// 开瓶时抽一句：AI 句整体只占 AI_NOTE_SHARE，其余从经典句 / 名人名言里抽。
+// exclude = 背包里已有的语录，抽出来的句子不重复；整个句库都被收完时才退回允许重复。
+export function fetchNote(exclude) {
+  const fresh = (arr) => (exclude && exclude.size ? arr.filter((s) => !exclude.has(noteKey(s))) : arr);
+  const ai = fresh(library.aiNotes);
+  if (ai.length && Math.random() < AI_NOTE_SHARE) {
+    return ai[(Math.random() * ai.length) | 0];
   }
-  const classic = [...CANNED_CORE, ...QUOTES];
-  return classic[(Math.random() * classic.length) | 0];
+  const pool = fresh(CLASSIC);
+  const pick = pool.length ? pool : CLASSIC; // 收齐了就允许重复，免得瓶子空着
+  return pick[(Math.random() * pick.length) | 0];
 }
 
 // 后台扩库：让 AI 写 5 张新字条，验收合格后入库（去重）
 // 库满后依然继续：新句子入库时淘汰最旧的 AI 句子（经典句永不淘汰）
-export function maybeEnrich() {
+export function maybeEnrich(exclude) {
   if (!AI.online || library.enriching) return;
   library.enriching = true;
   setTimeout(async () => {
@@ -140,10 +152,13 @@ export function maybeEnrich() {
         1.3,
         320,
       );
+      const taken = exclude && exclude.size ? exclude : null;
       const added = [];
       for (const line of reply.split(/\r?\n/)) {
         const t = validateNote(line);
-        if (t && !allNotes().includes(t) && !added.includes(t)) added.push(t);
+        if (!t || added.includes(t) || allNotes().includes(t)) continue;
+        if (taken && taken.has(noteKey(t))) continue; // 玩家已经收过这句，别再入库占位
+        added.push(t);
       }
       if (added.length) {
         library.aiNotes.push(...added);

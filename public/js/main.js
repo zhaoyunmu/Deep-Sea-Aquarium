@@ -12,7 +12,7 @@ import {
   buildSnapshot, slotInfo, saveSlot, loadSlot, applyPendingRestore,
 } from './save.js';
 import { Weather } from './weather.js';
-import { Bottle, fetchNote, maybeEnrich } from './bottle.js';
+import { Bottle, fetchNote, maybeEnrich, noteKey } from './bottle.js';
 import { MusicBox, listTracks, BOX_SIZE, BOX_LAND_OFFSET } from './musicbox.js';
 import { Star, generateLastWords } from './star.js';
 import { WhaleStone } from './stone.js';
@@ -363,6 +363,15 @@ function maybeGenesis() {
   if (_old) _old.unlockedCount = loreCount();
 }
 
+// 已经拿到手的语录：背包里的 + 从背包放飞回海里（自带字条）的。
+// 玩家把瓶子里的字改掉后，原文就不再算「已有」，可以重新抽到。
+function takenNoteKeys() {
+  const keys = new Set();
+  for (const it of collection.backpack) if (it.type === 'bottle' && it.note) keys.add(noteKey(it.note));
+  for (const b of bottles) if (b.note) keys.add(noteKey(b.note));
+  return keys;
+}
+
 async function openBottle(b) {
   if (!b || b.opened || b.bury >= 1) return;
   b.opened = true;
@@ -372,15 +381,15 @@ async function openBottle(b) {
 
   el('bottle-text').textContent = '……字条正在展开';
   el('bottle-overlay').classList.remove('hidden');
-  const core = b.note ?? fetchNote();
+  const core = b.note ?? fetchNote(takenNoteKeys());
   const note = core.startsWith('「') ? core : `「${core}」`;
   el('bottle-text').textContent = note;
   // 收进背包，记录时间
   collection.addToBackpack({ id: `bp${Date.now()}${Math.floor(Math.random() * 999)}`, type: 'bottle', note: core, time: Date.now() });
   UI.toast('🧴 漂流瓶已收进背包');
   unlockLore('bottle', '🌊 深海的低语：有些话，沉得比石头还深。');
-  // AI 在后台扩充句库（验收合格才入库）
-  maybeEnrich();
+  // AI 在后台扩充句库（验收合格才入库；刚收下的这句也不让 AI 重复写）
+  maybeEnrich(takenNoteKeys());
 }
 
 async function openStar(st) {
