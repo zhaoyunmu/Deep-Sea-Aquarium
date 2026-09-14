@@ -61,7 +61,9 @@ const plankton = [];   // 夜光藻
 const bottles = [];    // 海里的漂流瓶（可有多只）
 const boxes = [];      // 海里的音乐盒（可有多只；最靠后的一只在奏乐）
 let bottleTimer = rand(130, 240); // 漂流瓶出现频率：约 2~4 分钟一只
-let boxTimer = rand(200, 380);    // 音乐盒出现频率：约 3.5~6 分钟一只
+// 音乐盒自然出现的间隔（秒）：约 4.7~8 分钟一只（想更稀罕就调大这两个数）
+const BOX_SPAWN_RANGE = [280, 480];
+let boxTimer = rand(...BOX_SPAWN_RANGE);
 let boxTracks = [];               // 可选曲目（public/audio/box/ 文件夹），定时刷新
 function refreshBoxTracks() { listTracks().then((l) => { boxTracks = l; }).catch(() => {}); }
 refreshBoxTracks();
@@ -632,7 +634,7 @@ function resetRun() {
   boxes.length = 0;
   syncBoxMusic(); // 盒子都没了，音乐回落到背景乐
   bottleTimer = rand(130, 240);
-  boxTimer = rand(200, 380);
+  boxTimer = rand(...BOX_SPAWN_RANGE);
   // 删掉旧鱼/卵存档，让 spawnInitial 走"新档"分支
   clearRunSave();
   spawnInitial();
@@ -1216,6 +1218,8 @@ window.__tank = {
   set bottleTimer(v) { bottleTimer = v; },
   get passerTimer() { return passerTimer; },
   set passerTimer(v) { passerTimer = v; },
+  get boxTimer() { return boxTimer; },
+  set boxTimer(v) { boxTimer = v; },
   feed, buyEgg, hatch, selectFish, shockwave, saveFish, collectDust, selectJelly, unlockLore,
   collectBox,
   spawnBox: spawnMusicBox,
@@ -1417,7 +1421,7 @@ function tick(now) {
   if (boxes.length < 2) {
     boxTimer -= dt;
     if (boxTimer <= 0) {
-      boxTimer = rand(200, 380);
+      boxTimer = rand(...BOX_SPAWN_RANGE);
       spawnMusicBox();
     }
   }
