@@ -169,7 +169,9 @@ export const COMMANDS = [
     run(arg, T) {
       const tracks = T.boxTracks || [];
       if (!tracks.length) return { ok: false, msg: '还没导入曲目：把音频文件放进 public/audio/box/ 文件夹，等 1 分钟后再试' };
-      const list = tracks.map((t, i) => `${i + 1}.${t.name}`).join('、');
+      // 曲目表：标出哪些已收进背包（自然生成时不会再出现这些）
+      const fresh = new Set((T.boxPool || []).map((t) => t.src || t.name));
+      const list = tracks.map((t, i) => `${i + 1}.${t.name}${fresh.has(t.src || t.name) ? '' : '（已收）'}`).join('、');
       const key = (arg || '').trim();
       let track = null;
       if (/^\d+$/.test(key)) {
@@ -182,7 +184,14 @@ export const COMMANDS = [
         if (!track) return { ok: false, msg: `没有叫「${key}」的曲目。可用：${list}` };
       }
       const mb = T.spawnBox(track || undefined);
-      if (!mb) return { ok: false, msg: '海里的音乐盒够多了（最多同时两只），先收回一只吧' };
+      if (!mb) {
+        return {
+          ok: false,
+          msg: T.boxes.length >= 2
+            ? '海里的音乐盒够多了（最多同时两只），先收回一只吧'
+            : '还没收集的曲目都漂过了；想强制放一只，带上序号或曲名即可',
+        };
+      }
       const idx = tracks.indexOf(mb.track) + 1;
       // 不带参数时顺便报一遍序号表，方便下次按号点歌
       return { ok: true, msg: `第 ${idx} 首《${mb.track.name}》音乐盒正在落下${key ? '' : `（曲目表：${list}）`}` };

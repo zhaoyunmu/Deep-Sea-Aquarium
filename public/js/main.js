@@ -419,8 +419,10 @@ function syncBoxMusic() {
 function spawnMusicBox(track) {
   if (boxes.length >= 2) return null;
   if (!track) {
-    if (!boxTracks.length) return null;
-    track = boxTracks[(Math.random() * boxTracks.length) | 0];
+    // 自然生成只挑还没收集到的曲目（背包里的、海里正漂着的都跳过），集齐后就不再漂来
+    const pool = collectableTracks();
+    if (!pool.length) return null;
+    track = pool[(Math.random() * pool.length) | 0];
   }
   const mb = new MusicBox(rand(W * 0.2, W * 0.8), track);
   mb.onLanded = () => UI.toast(`🎵 《${track.name}》音乐盒在沙床上奏响了`, true);
@@ -428,6 +430,23 @@ function spawnMusicBox(track) {
   syncBoxMusic();
   UI.toast(`🎵 一只《${track.name}》音乐盒缓缓沉了下来…`, true);
   return mb;
+}
+
+// 曲目身份：以文件路径为准（改名才换 key）
+const trackKey = (t) => t.src || t.name;
+
+// 背包里已收集的曲目
+function collectedTrackKeys() {
+  const keys = new Set();
+  for (const it of collection.backpack) if (it.type === 'box') keys.add(trackKey(it));
+  return keys;
+}
+
+// 还能自然生成哪些曲目：排除背包里已有的，以及海里正漂着的
+function collectableTracks() {
+  const taken = collectedTrackKeys();
+  for (const b of boxes) if (b.track) taken.add(trackKey(b.track));
+  return boxTracks.filter((t) => !taken.has(trackKey(t)));
 }
 
 function collectBox(b) {
@@ -447,6 +466,11 @@ function collectBox(b) {
   });
   syncBoxMusic(); // 背包空了或前一只接棒，音乐自动切换
   UI.toast(`🎵 《${b.track.name}》音乐盒已收进背包，海面恢复了平日的声音`);
+  // 曲目收齐：海里不会再自然漂来音乐盒了，给个收尾
+  const inBag = collectedTrackKeys();
+  if (boxTracks.length && boxTracks.every((t) => inBag.has(trackKey(t)))) {
+    UI.toast('🎵 曲目都收进背包了——海里不会再漂来音乐盒', true);
+  }
 }
 
 // ---------- 指针 ----------
@@ -1186,6 +1210,7 @@ function updateEnvChip(t) {
 window.__tank = {
   fishes, eggs, foods, dusts, jellies, collection, weather, bottles, stars, starQueue, world, cursor, boxes,
   get boxTracks() { return boxTracks; },
+  get boxPool() { return collectableTracks(); },
   get boxMusic() { return boxMusicState(); },
   get bottleTimer() { return bottleTimer; },
   set bottleTimer(v) { bottleTimer = v; },
