@@ -1,7 +1,7 @@
 // ============ 星辰：鱼儿长眠后降落的纪念，可收进背包 ============
 import { TAU, rand, clamp, SCALE } from './util.js';
 import { DAY_SECONDS } from './fish.js';
-import { AI } from './ai.js';
+import { AI, LORE_RULE } from './ai.js';
 
 const LAST_WORDS = [
   '深海那么大，谢谢你来看过我。',
@@ -108,6 +108,7 @@ export async function generateLastWords(fish) {
           `你是万灵缸里一条即将钻进海床长眠的${fish.sp.name}，名叫「${fish.persona?.name || '无名'}」。`,
           `性格：${fish.persona?.personality || '神秘'}。说话方式：${fish.persona?.style || '简短'}。活了 ${fish.ageDays.toFixed(1)} 天。`,
           '留下最后一句话：10 到 20 个字，温柔、符合你的性格，可以是对访客、对大海的告别或感谢。只输出这一句。',
+          LORE_RULE,
         ].join('\n'),
         [{ role: 'user', content: '留下你的最后一句话。' }],
         1.1,
