@@ -530,7 +530,7 @@ function whaleStone(ctx, x, fy, s, p, t, full = false) {
   ctx.roundRect(-w / 2 + 5, -h / 2 + 5, w - 10, h - 10, [s * 0.13]);
   ctx.clip();
   const k = (w - 26) / 104;
-  ctx.translate(-55 * k, -34 * k - h * 0.06);
+  ctx.translate(-46.9 * k, -34 * k - h * 0.06);   // 墨迹中心 46.9：与鱼缸里的石碑用同一套对中
   ctx.scale(k, k);
   ctx.lineWidth = 2.4;
   ctx.lineCap = 'round';
@@ -545,6 +545,17 @@ function whaleStone(ctx, x, fy, s, p, t, full = false) {
       : 'rgba(165,200,225,.38)';
   ctx.beginPath();
   engraving(ctx);
+  ctx.stroke();
+  // 眼点与腹弧：和鱼缸里的石碑一模一样（接镜那一幕要能重合）
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = 'rgba(8,20,34,.95)';
+  ctx.beginPath();
+  ctx.arc(26, 27, 2.6, 0, TAU);
+  ctx.fill();
+  ctx.strokeStyle = full || lit ? 'rgba(190,245,255,.55)' : 'rgba(165,200,225,.25)';
+  ctx.beginPath();
+  ctx.moveTo(16, 48);
+  ctx.bezierCurveTo(28, 54, 44, 53, 56, 46);
   ctx.stroke();
   ctx.restore();
   ctx.restore();

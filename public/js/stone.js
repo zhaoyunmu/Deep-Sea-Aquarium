@@ -71,8 +71,9 @@ export class WhaleStone {
     ctx.roundRect(-w / 2 + 5, -h / 2 + 5, w - 10, h - 10, [13, 14, 6, 5]);
     ctx.clip();
     const k = (w - 26) / 104;
-    // 纹路中心 (55, 34) 对齐到石板中心偏上
-    ctx.translate(-55 * k, -34 * k - h * 0.06);
+    // 把刻纹的墨迹中心对齐到石板中心（横向按量出来的墨迹外框 x 6.75~87.13 → 中心 46.9，
+    // 别凭感觉写 55，那样整只鲸会偏左约 5px）；纵向保持居中偏上 h*0.06
+    ctx.translate(-46.9 * k, -34 * k - h * 0.06);
     ctx.scale(k, k);
     ctx.lineWidth = 2.4;
     ctx.lineCap = 'round';
