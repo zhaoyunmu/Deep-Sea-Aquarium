@@ -500,7 +500,7 @@ canvas#tank { position: fixed; inset: 0; display: block; cursor: crosshair; }
 
 /* ---------- 设置面板（居中弹窗） ---------- */
 #panel-settings-overlay .overlay-card.settings-card {
-  width: min(420px, 92vw);
+  width: min(calc(420px * var(--ui)), 92vw); /* 跟着界面缩放，别让标签在窄卡里折行 */
   padding: 26px 30px 22px;
   position: relative;
 }
@@ -515,13 +515,13 @@ canvas#tank { position: fixed; inset: 0; display: block; cursor: crosshair; }
   transition: border-color .2s, background .2s; user-select: none;
 }
 .settings-row:hover { border-color: rgba(111,227,255,.4); background: rgba(111,227,255,.06); }
-.settings-label { font-size: calc(16px * var(--ui)); color: var(--ink); }
+.settings-label { font-size: calc(16px * var(--ui)); color: var(--ink); white-space: nowrap; }
 .settings-toggle input {
   width: calc(20px * var(--ui)); height: calc(20px * var(--ui)); accent-color: var(--glow);
   cursor: pointer;
 }
 .settings-toggle input[type="range"] {
-  width: calc(150px * var(--ui)); height: 4px; accent-color: var(--glow); margin: 0;
+  width: calc(120px * var(--ui)); height: 4px; accent-color: var(--glow); margin: 0;
 }
 .settings-row:has(input[type="range"]) { padding: 14px 16px; }
 #panel-settings-overlay .overlay-card .primary { display: block; width: 100%; text-align: center; }

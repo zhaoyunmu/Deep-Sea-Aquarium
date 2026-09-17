@@ -678,7 +678,6 @@ el('btn-exit').addEventListener('click', () => {
   hideAllPanels();
   UI.hideGameChrome();
   worldPaused = true; // 回到标题：冻结整个世界
-  refreshGenesisEntry();
   el('splash').classList.remove('hidden');
 });
 
@@ -686,20 +685,14 @@ el('btn-exit').addEventListener('click', () => {
 el('btn-settings').addEventListener('click', () => {
   syncAudioToggles();
   syncShowNamesToggle();
-  // 四条低语集齐后，设置里多出一个重看序章的入口
-  el('btn-genesis').classList.toggle('hidden', loreCount() < LORE_KEYS.length);
   UI.togglePanel('panel-settings-overlay', true);
 });
 el('btn-genesis').addEventListener('click', () => {
   UI.togglePanel('panel-settings-overlay', false);
   playGenesisHere();
 });
-// 标题页的「重看序章」（四条低语集齐后出现）
-function refreshGenesisEntry() {
-  el('btn-genesis-title').classList.toggle('hidden', loreCount() < LORE_KEYS.length);
-}
+// 标题页的「🐋 序章」（随时可看；四条低语集齐时还会自动上演一次）
 el('btn-genesis-title').addEventListener('click', () => playGenesisHere());
-refreshGenesisEntry();
 
 // ---------- 存档槽：手动存档 / 读档（读写实现见 save.js） ----------
 
