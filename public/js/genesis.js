@@ -664,6 +664,7 @@ const easeIn = (p) => p * p;
 // ---------- 播放器 ----------
 
 let playing = false;
+let stopPlayback = null;   // 当前这一场的「收掉」函数（页面切到后台时要用）
 
 // 收尾：最后这几秒整段动画溶进鱼缸（露出一模一样的海床与鲸之石）
 const DISSOLVE = 1.8;
@@ -702,6 +703,7 @@ export function playGenesis(opts = {}) {
   ov.classList.remove('hidden');
   ov.style.transition = '';
   ov.style.opacity = '1';
+  ov.style.pointerEvents = '';
   seedMotes();
   seedSnow();
 
@@ -735,14 +737,18 @@ export function playGenesis(opts = {}) {
     ending = true;
     cancelAnimationFrame(raf);
     ov.style.opacity = '0';
+    ov.style.pointerEvents = 'none';   // 淡出的这段时间不再挡点击
     setTimeout(() => {
       ov.classList.add('hidden');
       ov.style.transition = '';
       ov.style.opacity = '1';
+      ov.style.pointerEvents = '';
       resetHud();
       playing = false;
+      stopPlayback = null;
     }, 900);
   };
+  stopPlayback = finish;
 
   const onSkip = (e) => { e.stopPropagation(); finish(); };
   ov.addEventListener('click', onSkip, { once: true });
@@ -844,6 +850,32 @@ function makeBuffer(w, h) {
 
 /** 分镜清单（给 /genesis list 用） */
 export const storyboard = STORYBOARD;
+
+/**
+ * 页面可见性变化：切到后台就收掉这一场（浏览器会停掉动画帧，留着会变成
+ * 一层「看不见却挡着点击」的幕布）；回到前台再兜一次底，清掉任何残留。
+ */
+export function onVisibilityChange(hidden) {
+  const ov = el('genesis-overlay');
+  if (!ov) return;
+  if (hidden) {
+    if (stopPlayback) stopPlayback();
+    return;
+  }
+  if (!playing && !ov.classList.contains('hidden')) {
+    ov.classList.add('hidden');
+    ov.style.transition = '';
+    ov.style.opacity = '1';
+    ov.style.pointerEvents = '';
+    for (const h of [el('hud'), el('exit-bar')]) {
+      if (h) { h.style.transition = ''; h.style.opacity = ''; }
+    }
+  }
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => onVisibilityChange(document.visibilityState === 'hidden'));
+}
 
 // 自动触发：等所有面板都关上的「安静时刻」再开场（最多等 90 秒，否则放弃，可手动重看）
 // play = 实际放映的函数（由 main.js 传入，好带上鱼缸的坐标）
