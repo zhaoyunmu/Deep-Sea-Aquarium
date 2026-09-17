@@ -5,131 +5,186 @@
 import { TAU, rand, el } from './util.js';
 import { whaleCall } from './audio.js';
 
-// ---------- 分镜脚本 ----------
-// dur: 秒；sub: 字幕；draw(p, ctx, W, H, t)：p = 本幕进度 0..1，t = 全局秒
-const SCENES = [
-  {
-    dur: 6.5,
-    sub: '很久以前，海比现在更安静。有一个声音，比浪潮还要低……',
-    draw(p, ctx, W, H) {
-      motes(ctx, W, H, 0.35 * p, 0.5);
-    },
-  },
-  {
-    dur: 9,
-    sub: '那是巨鲸的歌。它唱了一千年，海就听了一千年。',
-    enter() { whaleCall(0.3); },
-    draw(p, ctx, W, H) {
-      const s = Math.min(W, H) * 0.42;
-      const x = -s * 1.6 + p * (W + s * 3.2);
-      const y = H * (0.44 + Math.sin(p * 3) * 0.01);
-      backlight(ctx, x, y, s * 2.1, 0.9);
-      songRings(ctx, x - s * 0.9, y, p, 1);
-      whale(ctx, x, y, s, 0.9 - p * 0.15, Math.sin(p * 6) * 0.6);
-      motes(ctx, W, H, 0.5, 0.6);
-    },
-  },
-  {
-    dur: 8.5,
-    sub: '唱完最后一支歌，它缓缓沉了下去。',
-    enter() { whaleCall(0.5, true); },
-    draw(p, ctx, W, H) {
-      const s = Math.min(W, H) * 0.42;
-      const x = W * 0.46 + p * W * 0.05;
-      const y = H * 0.42 + p * H * 0.22;
-      backlight(ctx, x, y, s * 2.0, 0.8 * (1 - p * 0.5));
-      songRings(ctx, x - s * 0.9, y, p, 1 - p * 0.8);
-      ctx.save();
-      ctx.translate(x, y);
-      ctx.rotate(p * 0.24);
-      whale(ctx, 0, 0, s, (0.9 - p * 0.55) * (1 - easeIn(p) * 0.3), Math.sin(p * 4) * 0.3 * (1 - p));
-      ctx.restore();
-      motes(ctx, W, H, 0.5, 0.5);
-    },
-  },
-  {
-    dur: 10,
-    sub: '它不是消失了——只是把自己铺成了这片海。',
-    draw(p, ctx, W, H) {
-      const s = Math.min(W, H) * 0.42;
-      const fy = H * 0.8;
-      // 躺在沙床上的鲸，随进度化作沙尘
-      backlight(ctx, W * 0.5, fy - s * 0.15, s * 1.8, 0.7 * Math.max(0, 1 - p * 1.2));
-      ctx.save();
-      ctx.translate(W * 0.5, fy - s * 0.16);
-      ctx.globalAlpha = Math.max(0, 0.85 - p * 1.1);
-      whale(ctx, 0, 0, s, 0.2, 0);
-      ctx.restore();
-      if (p > 0.15 && p < 0.85) dissolveDust(ctx, W * 0.5, fy - s * 0.15, s, p);
-      floor(ctx, W, H, Math.min(1, p * 1.6));
-      kelp(ctx, W, H, fy, Math.min(1, p * 1.2), 6, 0.1);
-      motes(ctx, W, H, 0.5, 0.7);
-    },
-  },
-  {
-    dur: 8.5,
-    sub: '古老的水母看见了这一切。从那天起，她再也没有离开。',
-    draw(p, ctx, W, H) {
-      const fy = H * 0.8;
-      floor(ctx, W, H, 1);
-      kelp(ctx, W, H, fy, 1, 6, 0.1 + p * 0.2);
-      jelly(ctx, W * 0.5, H * (0.95 - p * 0.5), Math.min(W, H) * 0.15, p);
-      motes(ctx, W, H, 0.55, 0.5);
-    },
-  },
-  {
-    dur: 8.5,
-    sub: '后来，小小的灵魂在这里出生、长大、老去，再化作星辰。',
-    draw(p, ctx, W, H, t) {
-      const fy = H * 0.8;
-      floor(ctx, W, H, 1);
-      kelp(ctx, W, H, fy, 1, 7, 0.3);
-      eggs(ctx, W, fy, p);
-      littleFish(ctx, W, H, fy, p, t);
-      jelly(ctx, W * 0.16, H * 0.45 + Math.sin(t * 0.5) * 8, Math.min(W, H) * 0.08, 1);
-      motes(ctx, W, H, 0.55, 0.6);
-    },
-  },
-  {
-    dur: 9,
-    sub: '临别前，它把最后的智慧刻进一块石碑——等一句真话，将它唤醒。',
-    draw(p, ctx, W, H, t) {
-      const fy = H * 0.8;
-      floor(ctx, W, H, 1);
-      kelp(ctx, W, H, fy, 1, 7, 0.3);
-      whaleStone(ctx, W * 0.62, fy + 6, Math.min(W, H) * 0.155, p, t);
-      motes(ctx, W, H, 0.5, 0.55);
-    },
-  },
-  {
-    dur: 7.5,
-    sub: '而有些瓶子，装着不是墨水写就的话。',
-    draw(p, ctx, W, H) {
-      const fy = H * 0.8;
-      floor(ctx, W, H, 1);
-      kelp(ctx, W, H, fy, 1, 7, 0.3);
-      whaleStone(ctx, W * 0.62, fy + 6, Math.min(W, H) * 0.155, 1, 0);
-      bottles(ctx, W, H, fy, p);
-      motes(ctx, W, H, 0.55, 0.6);
-    },
-  },
-  {
-    dur: 9.5,
-    sub: '这片海，现在交给你了。',
-    title: true,
-    draw(p, ctx, W, H) {
-      motes(ctx, W, H, 0.4 * (1 - p), 0.4);
-      // 标题随字幕浮现，收尾前再归于暗
-      const a = p < 0.12 ? p / 0.12 : p > 0.8 ? (1 - p) / 0.2 : 1;
-      titleCard(ctx, W, H, a);
-    },
-  },
+// ============================================================================
+//  分镜表 —— 这一块是留给你自己改的：改完保存，刷新页面（或点设置里的「🐋 序章」）就能看
+//
+//    name : 这一幕的名字，只出现在 /genesis list 的清单里
+//    dur  : 这一幕持续几秒，可以写小数，例如 4.5
+//    sub  : 这一幕的字幕，一行中文；留空 '' 就是这一幕不显示字幕
+//    art  : 这一幕用哪段画面（见下面的「画面」一栏，换别的名字就是换画面）
+//    sound: 这一幕开头的声音：'' 无声 · 'call' 鲸鸣 · 'callSoft' 轻声鲸鸣
+//
+//  常用改法举例：
+//    · 觉得第一幕太长 → 把 dur: 6.5 改成 dur: 4
+//    · 想换文案 → 直接改 sub 引号里的中文（引号别删掉）
+//    · 想多看一会儿鲸之石 → 把那一幕 dur 调大，或者把鲸之石那一幕复制一行
+// ============================================================================
+const STORYBOARD = [
+  { name: '静海', dur: 6.5, art: 'quiet', sound: '', sub: '很久以前，海比现在更安静。有一个声音，比浪潮还要低……' },
+  { name: '鲸之歌', dur: 9, art: 'song', sound: 'call', sub: '那是巨鲸的歌。它唱了一千年，海就听了一千年。' },
+  { name: '下沉', dur: 8.5, art: 'sink', sound: 'callSoft', sub: '唱完最后一支歌，它缓缓沉了下去。' },
+  { name: '化作海', dur: 10, art: 'become', sound: '', sub: '它不是消失了——只是把自己铺成了这片海。' },
+  { name: '澜', dur: 8.5, art: 'witness', sound: '', sub: '古老的水母看见了这一切。从那天起，她再也没有离开。' },
+  { name: '万灵诞生', dur: 8.5, art: 'born', sound: '', sub: '后来，小小的灵魂在这里出生、长大、老去，再化作星辰。' },
+  { name: '鲸之石', dur: 9, art: 'stone', sound: '', sub: '临别前，它把最后的智慧刻进一块石碑——等一句真话，将它唤醒。' },
+  { name: '漂流瓶', dur: 7.5, art: 'notes', sound: '', sub: '而有些瓶子，装着不是墨水写就的话。' },
+  { name: '尾幕', dur: 9.5, art: 'title', sound: '', sub: '这片海，现在交给你了。' },
 ];
 
-const TOTAL = SCENES.reduce((a, s) => a + s.dur, 0);
+// 每一幕开关头声音（名字 → 实际声音）
+const SOUNDS = { call: () => whaleCall(0.3), callSoft: () => whaleCall(0.5, true) };
+
+// ============================================================================
+//  画面 —— 每一幕画什么（这段是画面代码，一般不用动；改中文请改上面的分镜表）
+//  p = 这一幕的进度 0→1，ctx/W/H 是画布，t = 从开场算起的总秒数
+// ============================================================================
+const ART = {
+  // 静海：只有微尘
+  quiet(p, ctx, W, H) {
+    motes(ctx, W, H, 0.35 * p, 0.5);
+  },
+
+  // 鲸之歌：巨鲸横穿画面，歌声一圈圈荡开
+  song(p, ctx, W, H) {
+    const s = Math.min(W, H) * 0.42;
+    const x = -s * 1.6 + p * (W + s * 3.2);
+    const y = H * (0.44 + Math.sin(p * 3) * 0.01);
+    backlight(ctx, x, y, s * 2.1, 0.9);
+    songRings(ctx, x - s * 0.9, y, p, 1);
+    whale(ctx, x, y, s, 0.9 - p * 0.15, Math.sin(p * 6) * 0.6);
+    motes(ctx, W, H, 0.5, 0.6);
+  },
+
+  // 下沉：原地翻身缓缓落下，歌声渐弱
+  sink(p, ctx, W, H) {
+    const s = Math.min(W, H) * 0.42;
+    const x = W * 0.46 + p * W * 0.05;
+    const y = H * 0.42 + p * H * 0.22;
+    backlight(ctx, x, y, s * 2.0, 0.8 * (1 - p * 0.5));
+    songRings(ctx, x - s * 0.9, y, p, 1 - p * 0.8);
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(p * 0.24);
+    whale(ctx, 0, 0, s, (0.9 - p * 0.55) * (1 - easeIn(p) * 0.3), Math.sin(p * 4) * 0.3 * (1 - p));
+    ctx.restore();
+    motes(ctx, W, H, 0.5, 0.5);
+  },
+
+  // 化作海：鲸躺在沙床上散成沙尘，海床与海草随之生出
+  become(p, ctx, W, H) {
+    const s = Math.min(W, H) * 0.42;
+    const fy = H * 0.8;
+    backlight(ctx, W * 0.5, fy - s * 0.15, s * 1.8, 0.7 * Math.max(0, 1 - p * 1.2));
+    ctx.save();
+    ctx.translate(W * 0.5, fy - s * 0.16);
+    ctx.globalAlpha = Math.max(0, 0.85 - p * 1.1);
+    whale(ctx, 0, 0, s, 0.2, 0);
+    ctx.restore();
+    if (p > 0.15 && p < 0.85) dissolveDust(ctx, W * 0.5, fy - s * 0.15, s, p);
+    floor(ctx, W, H, Math.min(1, p * 1.6));
+    kelp(ctx, W, H, fy, Math.min(1, p * 1.2), 6, 0.1);
+    motes(ctx, W, H, 0.5, 0.7);
+  },
+
+  // 澜：古老的水母从深处升起
+  witness(p, ctx, W, H) {
+    const fy = H * 0.8;
+    floor(ctx, W, H, 1);
+    kelp(ctx, W, H, fy, 1, 6, 0.1 + p * 0.2);
+    jelly(ctx, W * 0.5, H * (0.95 - p * 0.5), Math.min(W, H) * 0.15, p);
+    motes(ctx, W, H, 0.55, 0.5);
+  },
+
+  // 万灵诞生：卵、小鱼、小水母，以及一颗落进沙床的星辰
+  born(p, ctx, W, H, t) {
+    const fy = H * 0.8;
+    floor(ctx, W, H, 1);
+    kelp(ctx, W, H, fy, 1, 7, 0.3);
+    eggs(ctx, W, fy, p);
+    littleFish(ctx, W, H, fy, p, t);
+    jelly(ctx, W * 0.16, H * 0.45 + Math.sin(t * 0.5) * 8, Math.min(W, H) * 0.08, 1);
+    // 老去的灵魂化作星辰：一颗星从上方的水里缓缓落到沙床上
+    if (p > 0.3) {
+      const sp = Math.min(1, (p - 0.3) / 0.42);
+      const ease = 1 - Math.pow(1 - sp, 2);
+      const sx = W * 0.74;
+      const sy = H * 0.2 + ease * (fy - 14 - H * 0.2);
+      memorialStar(ctx, sx, sy, Math.min(W, H) * 0.012 + 6, Math.min(1, sp * 2.5), t);
+      motes(ctx, W, H, 0.55, 0.6);
+      return;
+    }
+    motes(ctx, W, H, 0.55, 0.6);
+  },
+
+  // 鲸之石：石碑从沙里升起，鲸纹点亮
+  stone(p, ctx, W, H, t) {
+    const fy = H * 0.8;
+    floor(ctx, W, H, 1);
+    kelp(ctx, W, H, fy, 1, 7, 0.3);
+    whaleStone(ctx, W * 0.62, fy + 6, Math.min(W, H) * 0.155, p, t);
+    motes(ctx, W, H, 0.5, 0.55);
+  },
+
+  // 漂流瓶：几只瓶子带着暖光沉下来
+  notes(p, ctx, W, H) {
+    const fy = H * 0.8;
+    floor(ctx, W, H, 1);
+    kelp(ctx, W, H, fy, 1, 7, 0.3);
+    whaleStone(ctx, W * 0.62, fy + 6, Math.min(W, H) * 0.155, 1, 0);
+    bottles(ctx, W, H, fy, p);
+    motes(ctx, W, H, 0.55, 0.6);
+  },
+
+  // 尾幕：标题浮现再归于暗
+  title(p, ctx, W, H) {
+    motes(ctx, W, H, 0.4 * (1 - p), 0.4);
+    const a = p < 0.12 ? p / 0.12 : p > 0.8 ? (1 - p) / 0.2 : 1;
+    titleCard(ctx, W, H, a);
+  },
+};
+
+const TOTAL = STORYBOARD.reduce((a, s) => a + s.dur, 0);
 const FONT = 'Georgia, "Noto Serif SC", "STSong", "SimSun", serif';
 
 // ---------- 形状库 ----------
+
+// 星辰：暖光 + 四道光刺（老去的灵魂落在沙床上的那颗星）
+function memorialStar(ctx, x, y, r, a, t) {
+  if (a <= 0.01) return;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  const g = ctx.createRadialGradient(x, y, 0, x, y, r * 3.4);
+  g.addColorStop(0, `rgba(255,240,200,${0.5 * a})`);
+  g.addColorStop(0.4, `rgba(255,222,152,${0.15 * a})`);
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 3.4, 0, TAU);
+  ctx.fill();
+  const tw = 0.75 + 0.25 * Math.sin(t * 2.4);
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = `rgba(255,246,218,${0.8 * a * tw})`;
+  ctx.lineWidth = 1.7;
+  for (const [dx, dy] of [[1, 0], [0, 1]]) {
+    ctx.beginPath();
+    ctx.moveTo(x - dx * r, y - dy * r);
+    ctx.lineTo(x + dx * r, y + dy * r);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = `rgba(255,246,218,${0.35 * a * tw})`;
+  ctx.lineWidth = 1.1;
+  for (const [dx, dy] of [[0.7, 0.7], [0.7, -0.7]]) {
+    ctx.beginPath();
+    ctx.moveTo(x - dx * r * 0.55, y - dy * r * 0.55);
+    ctx.lineTo(x + dx * r * 0.55, y + dy * r * 0.55);
+    ctx.stroke();
+  }
+  ctx.fillStyle = `rgba(255,252,240,${0.9 * a})`;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 0.22, 0, TAU);
+  ctx.fill();
+  ctx.restore();
+}
 
 // 背光：鲸身后方一片微亮的水光，让剪影从暗背景里浮出来
 function backlight(ctx, x, y, r, a) {
@@ -522,8 +577,15 @@ function fitCanvas(cv) {
   return ctx;
 }
 
-export function playGenesis() {
+/**
+ * 放映序章。
+ * opts.from  = 从第几幕开始（0 起，测试/预览用）
+ * opts.speed = 播放速度倍率（1 = 正常；0.5 慢放，2 快放）
+ */
+export function playGenesis(opts = {}) {
   if (playing) return;
+  const from = Math.max(0, Math.min(STORYBOARD.length - 1, Math.floor(opts.from) || 0));
+  const speed = Math.max(0.25, Math.min(3, Number(opts.speed) || 1));
   playing = true;
   const ov = el('genesis-overlay');
   const cv = el('genesis-canvas');
@@ -533,8 +595,10 @@ export function playGenesis() {
 
   const ctx = fitCanvas(cv);
   let raf = 0;
-  let start = performance.now();
-  let entered = -1;   // 已触发 enter 的分镜序号
+  // 从第 from 幕开始：把「已经过去的时间」预先扣掉，后面的分幕逻辑就不用改
+  const skipped = STORYBOARD.slice(0, from).reduce((a, s) => a + s.dur, 0);
+  const start = performance.now() - (skipped * 1000) / speed;
+  let entered = from - 1;   // 已触发开头声音的分镜序号
   let ending = false;
 
   const finish = () => {
@@ -551,7 +615,7 @@ export function playGenesis() {
   window.addEventListener('keydown', onKey, { once: true });
 
   const frame = (now) => {
-    const t = (now - start) / 1000;
+    const t = ((now - start) / 1000) * speed;
     // 结尾淡出
     if (t > TOTAL) { finish(); return; }
     const fadeOut = t > TOTAL - 1.2 ? (TOTAL - t) / 1.2 : 1;
@@ -568,17 +632,22 @@ export function playGenesis() {
 
     // 找到当前分镜
     let acc = 0, idx = 0;
-    for (let i = 0; i < SCENES.length; i++) {
-      if (t < acc + SCENES[i].dur) { idx = i; break; }
-      acc += SCENES[i].dur;
+    for (let i = 0; i < STORYBOARD.length; i++) {
+      if (t < acc + STORYBOARD[i].dur) { idx = i; break; }
+      acc += STORYBOARD[i].dur;
     }
-    const sc = SCENES[idx];
-    if (entered !== idx) { entered = idx; sc.enter && sc.enter(); }
+    const sc = STORYBOARD[idx];
+    if (entered !== idx) {
+      entered = idx;
+      // 跳幕开始时，第一幕的进入声音会响——这是刻意的，方便单独预览
+      if (SOUNDS[sc.sound]) SOUNDS[sc.sound]();
+    }
     const p = (t - acc) / sc.dur;
 
     ctx.save();
     ctx.globalAlpha = fadeOut * fadeIn;
-    sc.draw(p, ctx, innerWidth, innerHeight, t);
+    const art = ART[sc.art] || ART.quiet;
+    art(p, ctx, innerWidth, innerHeight, t);
 
     // 字幕：本幕后 40% 处淡入，幕尾淡出（末幕标题除外，字幕靠后居中）
     const subA = p < 0.18 ? p / 0.18 : p > 0.86 ? (1 - p) / 0.14 : 1;
@@ -597,6 +666,9 @@ export function playGenesis() {
   };
   raf = requestAnimationFrame(frame);
 }
+
+/** 分镜清单（给 /genesis list 用） */
+export const storyboard = STORYBOARD;
 
 // 自动触发：等所有面板都关上的「安静时刻」再开场（最多等 90 秒，否则放弃，可手动重看）
 export function armGenesis() {

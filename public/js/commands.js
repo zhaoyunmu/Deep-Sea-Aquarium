@@ -260,11 +260,31 @@ export const COMMANDS = [
     },
   },
   {
-    name: 'genesis', alias: ['神话', '序章'], usage: '/genesis', desc: '重演藏在海底的故事（神话序章动画）',
-    run(_, T) {
+    name: 'genesis', alias: ['神话', '序章'], usage: '/genesis [幕号] [速度] · /genesis list', desc: '重演序章动画；带幕号=从那一幕开始预览，带速度=快慢放，list=列出台词',
+    run(arg, T) {
       if (!T.playGenesis) return { ok: false, msg: '序章模块没有加载' };
-      T.playGenesis();
-      return { ok: true, msg: '……海开始讲那个古老的故事了' };
+      const scenes = T.genesisScenes || [];
+      const raw = (arg || '').trim();
+      if (/^(list|表|剧本|台词)$/i.test(raw)) {
+        const rows = scenes.map((s, i) => `${i + 1}. ${s.name} · ${s.dur}s｜${s.sub || '（无字幕）'}`);
+        return { ok: true, msg: `序章分镜（共 ${scenes.length} 幕，总 ${scenes.reduce((a, s) => a + s.dur, 0)} 秒）：\n${rows.join('\n')}` };
+      }
+      const [a1, a2] = raw.split(/\s+/).filter(Boolean);
+      let from = 0, speed = 1;
+      if (a1 !== undefined) {
+        const n = Number(a1);
+        if (!Number.isInteger(n) || n < 1 || n > scenes.length) {
+          return { ok: false, msg: `用法：/genesis · /genesis 3（从第 3 幕开始）· /genesis 3 2（2 倍速）· /genesis list。共 ${scenes.length} 幕` };
+        }
+        from = n - 1;
+      }
+      if (a2 !== undefined) {
+        const v = Number(String(a2).replace(/^[x×]/, ''));
+        if (!(v > 0)) return { ok: false, msg: '速度要大于 0，例如 /genesis 3 2' };
+        speed = v;
+      }
+      T.playGenesis({ from, speed });
+      return { ok: true, msg: `……海开始讲第 ${from + 1} 幕「${scenes[from]?.name || ''}」${speed !== 1 ? `（${speed} 倍速）` : ''}` };
     },
   },
   {

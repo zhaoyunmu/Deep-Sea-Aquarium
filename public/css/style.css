@@ -566,3 +566,13 @@ canvas#tank { position: fixed; inset: 0; display: block; cursor: crosshair; }
   color: rgba(127,168,189,.45);
   animation: fadeIn 1.6s 2.5s both;
 }
+
+/* ---------- 标题页：重看序章 ---------- */
+.splash-replay {
+  display: block; margin: 26px auto 0; padding: 3px 2px;
+  font-family: var(--font); font-size: calc(13px * var(--ui)); letter-spacing: 2px;
+  color: rgba(127,168,189,.7); background: none; cursor: pointer;
+  border: none; border-bottom: 1px solid rgba(127,168,189,.3);
+  transition: color .2s, border-color .2s;
+}
+.splash-replay:hover { color: rgba(200,235,252,.95); border-color: rgba(160,240,255,.6); }

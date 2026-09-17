@@ -17,7 +17,7 @@ import { MusicBox, listTracks, BOX_SIZE, BOX_LAND_OFFSET } from './musicbox.js';
 import { Star, generateLastWords } from './star.js';
 import { WhaleStone } from './stone.js';
 import { ClockStone } from './clockstone.js';
-import { playGenesis, armGenesis } from './genesis.js';
+import { playGenesis, armGenesis, storyboard as genesisScenes } from './genesis.js';
 import { AI, ChatPanel, generatePersona, fallbackPersona } from './ai.js';
 import * as UI from './ui.js';
 import { playSfx, prefs, setMusic, setSfx, setMusicVolume, setBoxTrack, boxMusicState } from './audio.js';
@@ -659,6 +659,7 @@ el('btn-exit').addEventListener('click', () => {
   hideAllPanels();
   UI.hideGameChrome();
   worldPaused = true; // 回到标题：冻结整个世界
+  refreshGenesisEntry();
   el('splash').classList.remove('hidden');
 });
 
@@ -674,6 +675,12 @@ el('btn-genesis').addEventListener('click', () => {
   UI.togglePanel('panel-settings-overlay', false);
   playGenesis();
 });
+// 标题页的「重看序章」（四条低语集齐后出现）
+function refreshGenesisEntry() {
+  el('btn-genesis-title').classList.toggle('hidden', loreCount() < LORE_KEYS.length);
+}
+el('btn-genesis-title').addEventListener('click', () => playGenesis());
+refreshGenesisEntry();
 
 // ---------- 存档槽：手动存档 / 读档（读写实现见 save.js） ----------
 
@@ -1247,6 +1254,7 @@ window.__tank = {
   spawnBottle: (x, note) => { const b = new Bottle(x ?? rand(W * 0.3, W * 0.7), note ?? null); bottles.push(b); return b; },
   throwFromBackpack,
   playGenesis,
+  get genesisScenes() { return genesisScenes.map((s) => ({ name: s.name, dur: s.dur, sub: s.sub })); },
   lore: () => lore,
 };
 
