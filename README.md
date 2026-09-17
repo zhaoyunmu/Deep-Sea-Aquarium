@@ -55,8 +55,10 @@ node server.js
 | `name` | 这一幕的名字（只出现在 `/genesis list` 的清单里） |
 | `dur` | 这一幕持续几秒，可以写小数（如 4.5） |
 | `sub` | 字幕，一行中文；留空 `''` 就是这一幕不显示字幕 |
-| `art` | 用哪段画面：`quiet` 静海 / `song` 鲸之歌 / `sink` 下沉 / `become` 化作海 / `witness` 澜 / `born` 万灵诞生 / `stone` 鲸之石 / `notes` 漂流瓶 / `title` 尾幕 |
+| `art` | 用哪段画面：`quiet` 静海 / `song` 鲸之歌 / `sink` 下沉 / `become` 化作海 / `witness` 澜 / `born` 万灵诞生 / `stone` 鲸之石 / `notes` 漂流瓶 / `title` 尾幕 / `arrival` 接镜 |
 | `sound` | 这一幕开头的声音：`''` 无声 / `call` 鲸鸣 / `callSoft` 轻声鲸鸣 |
+
+两处和鱼缸的联动：**光柱与海雪**从「化作海」那一幕开始出现（在那之前海是空的——「海比现在更安静」）；最后一幕「**接镜**」的海床高度、鲸之石的位置和大小都与鱼缸里一致，所以整段动画最后会无缝溶进你的鱼缸，界面再跟着浮出来（所以这一幕的 `art` 请保持 `arrival`）。
 
 单独预览某一幕：`/genesis 6`（从第 6 幕开始）、`/genesis 6 2`（二倍速）、`/genesis list`（列出台词与秒数）。想加一幕：把某一行整行复制、改 `name` 和 `sub` 就行。
 

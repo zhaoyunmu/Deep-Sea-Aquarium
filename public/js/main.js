@@ -350,12 +350,24 @@ function unlockLore(key, text) {
   UI.toast(text, true);
   maybeGenesis();
 }
+// 放映序章：把鱼缸的坐标一起交给它——收尾的「接镜」要对齐真实的沙床与鲸之石，
+// 在缸里播时顺便让 HUD 跟着浮出来
+function playGenesisHere(opts = {}) {
+  playGenesis({
+    ...opts,
+    floorY: world.floorY,
+    stoneX: whaleStone.x,
+    stoneW: whaleStone.w,
+    hudFade: !worldPaused,
+  });
+}
+
 // 四条低语集齐 → 上演藏在海底的故事（只自动演一次，之后可在设置里重看）
 function maybeGenesis() {
   if (lore.genesis || loreCount() < LORE_KEYS.length) return;
   lore.genesis = true;
   try { localStorage.setItem(LORE_KEY, JSON.stringify(lore)); } catch { /* 忽略 */ }
-  armGenesis(); // 等所有面板安静下来再开场
+  armGenesis(() => playGenesisHere()); // 等所有面板安静下来再开场
 }
 // 加载时，把已保存的解锁数赋给老水母（跨刷新记住进度）
 {
@@ -673,13 +685,13 @@ el('btn-settings').addEventListener('click', () => {
 });
 el('btn-genesis').addEventListener('click', () => {
   UI.togglePanel('panel-settings-overlay', false);
-  playGenesis();
+  playGenesisHere();
 });
 // 标题页的「重看序章」（四条低语集齐后出现）
 function refreshGenesisEntry() {
   el('btn-genesis-title').classList.toggle('hidden', loreCount() < LORE_KEYS.length);
 }
-el('btn-genesis-title').addEventListener('click', () => playGenesis());
+el('btn-genesis-title').addEventListener('click', () => playGenesisHere());
 refreshGenesisEntry();
 
 // ---------- 存档槽：手动存档 / 读档（读写实现见 save.js） ----------
@@ -1253,7 +1265,7 @@ window.__tank = {
   spawnFish: (id) => { const sp = SPECIES.find((s) => s.id === id) || SPECIES[0]; const f = new Fish(sp, W * 0.35, H * 0.35); fishes.push(f); return f; },
   spawnBottle: (x, note) => { const b = new Bottle(x ?? rand(W * 0.3, W * 0.7), note ?? null); bottles.push(b); return b; },
   throwFromBackpack,
-  playGenesis,
+  playGenesis: playGenesisHere,
   get genesisScenes() { return genesisScenes.map((s) => ({ name: s.name, dur: s.dur, sub: s.sub })); },
   lore: () => lore,
 };

@@ -18,6 +18,9 @@ import { whaleCall } from './audio.js';
 //    · 觉得第一幕太长 → 把 dur: 6.5 改成 dur: 4
 //    · 想换文案 → 直接改 sub 引号里的中文（引号别删掉）
 //    · 想多看一会儿鲸之石 → 把那一幕 dur 调大，或者把鲸之石那一幕复制一行
+//
+//  注意：最后一行「接镜」是把动画交还给鱼缸的那一幕（海床高度、石碑位置都和鱼缸
+//  里对齐，所以能无缝溶进去）。它的 art 请保持 'arrival'，不然接不上了。
 // ============================================================================
 const STORYBOARD = [
   { name: '静海', dur: 6.5, art: 'quiet', sound: '', sub: '很久以前，海比现在更安静。有一个声音，比浪潮还要低……' },
@@ -29,6 +32,7 @@ const STORYBOARD = [
   { name: '鲸之石', dur: 9, art: 'stone', sound: '', sub: '临别前，它把最后的智慧刻进一块石碑——等一句真话，将它唤醒。' },
   { name: '漂流瓶', dur: 7.5, art: 'notes', sound: '', sub: '而有些瓶子，装着不是墨水写就的话。' },
   { name: '尾幕', dur: 9.5, art: 'title', sound: '', sub: '这片海，现在交给你了。' },
+  { name: '接镜', dur: 5, art: 'arrival', sound: '', sub: '' },
 ];
 
 // 每一幕开关头声音（名字 → 实际声音）
@@ -39,7 +43,7 @@ const SOUNDS = { call: () => whaleCall(0.3), callSoft: () => whaleCall(0.5, true
 //  p = 这一幕的进度 0→1，ctx/W/H 是画布，t = 从开场算起的总秒数
 // ============================================================================
 const ART = {
-  // 静海：只有微尘
+  // 静海：只有微尘（这时候海更安静——光柱和海雪都还没来）
   quiet(p, ctx, W, H) {
     motes(ctx, W, H, 0.35 * p, 0.5);
   },
@@ -70,10 +74,11 @@ const ART = {
     motes(ctx, W, H, 0.5, 0.5);
   },
 
-  // 化作海：鲸躺在沙床上散成沙尘，海床与海草随之生出
-  become(p, ctx, W, H) {
+  // 化作海：鲸躺在沙床上散成沙尘，海床与海草随之生出；光柱和海雪也随着它一起到来
+  become(p, ctx, W, H, t) {
     const s = Math.min(W, H) * 0.42;
-    const fy = H * 0.8;
+    const fy = FLOOR(H);
+    ambient(ctx, W, H, t, Math.min(1, p * 1.4));
     backlight(ctx, W * 0.5, fy - s * 0.15, s * 1.8, 0.7 * Math.max(0, 1 - p * 1.2));
     ctx.save();
     ctx.translate(W * 0.5, fy - s * 0.16);
@@ -86,18 +91,22 @@ const ART = {
     motes(ctx, W, H, 0.5, 0.7);
   },
 
-  // 澜：古老的水母从深处升起
-  witness(p, ctx, W, H) {
-    const fy = H * 0.8;
+  // 澜：古老的水母从沙床后面升起来
+  witness(p, ctx, W, H, t) {
+    const fy = FLOOR(H);
+    ambient(ctx, W, H, t, 1);
+    // 先快后慢：探出沙面很快，之后慢慢飘高（先画她、再画沙床，才是从沙里升起来）
+    const rise = 1 - Math.pow(1 - p, 2);
+    jelly(ctx, W * 0.5, fy + 90 - rise * H * 0.62, Math.min(W, H) * 0.15, Math.min(1, p * 2.2));
     floor(ctx, W, H, 1);
     kelp(ctx, W, H, fy, 1, 6, 0.1 + p * 0.2);
-    jelly(ctx, W * 0.5, H * (0.95 - p * 0.5), Math.min(W, H) * 0.15, p);
     motes(ctx, W, H, 0.55, 0.5);
   },
 
   // 万灵诞生：卵、小鱼、小水母，以及一颗落进沙床的星辰
   born(p, ctx, W, H, t) {
-    const fy = H * 0.8;
+    const fy = FLOOR(H);
+    ambient(ctx, W, H, t, 1);
     floor(ctx, W, H, 1);
     kelp(ctx, W, H, fy, 1, 7, 0.3);
     eggs(ctx, W, fy, p);
@@ -118,7 +127,8 @@ const ART = {
 
   // 鲸之石：石碑从沙里升起，鲸纹点亮
   stone(p, ctx, W, H, t) {
-    const fy = H * 0.8;
+    const fy = FLOOR(H);
+    ambient(ctx, W, H, t, 1);
     floor(ctx, W, H, 1);
     kelp(ctx, W, H, fy, 1, 7, 0.3);
     whaleStone(ctx, W * 0.62, fy + 6, Math.min(W, H) * 0.155, p, t);
@@ -126,8 +136,9 @@ const ART = {
   },
 
   // 漂流瓶：几只瓶子带着暖光沉下来
-  notes(p, ctx, W, H) {
-    const fy = H * 0.8;
+  notes(p, ctx, W, H, t) {
+    const fy = FLOOR(H);
+    ambient(ctx, W, H, t, 1);
     floor(ctx, W, H, 1);
     kelp(ctx, W, H, fy, 1, 7, 0.3);
     whaleStone(ctx, W * 0.62, fy + 6, Math.min(W, H) * 0.155, 1, 0);
@@ -141,12 +152,94 @@ const ART = {
     const a = p < 0.12 ? p / 0.12 : p > 0.8 ? (1 - p) / 0.2 : 1;
     titleCard(ctx, W, H, a);
   },
+
+  // 接镜：镜头落回真实鱼缸——海床高度、鲸之石的位置和大小都和缸里一模一样，
+  // 所以最后整段动画溶进鱼缸时，两边的石碑会正好叠在一起，像镜头推进去一样。
+  // 注意画法顺序也和缸里一致：先石碑、再沙床（沙会盖住碑脚）。
+  arrival(p, ctx, W, H, t) {
+    const fy = FLOOR(H);
+    ambient(ctx, W, H, t, 1);
+    whaleStone(ctx, stoneX(W), fy, STONE_W, 1, t, true);
+    floor(ctx, W, H, 1);
+    kelp(ctx, W, H, fy, 1, 7, 0.25);
+    motes(ctx, W, H, 0.5, 0.5);
+  },
 };
 
 const TOTAL = STORYBOARD.reduce((a, s) => a + s.dur, 0);
 const FONT = 'Georgia, "Noto Serif SC", "STSong", "SimSun", serif';
 
+// ---------- 与鱼缸对齐 ----------
+// 放映时由 main.js 传进来：海床高度、鲸之石的位置和宽度都用鱼缸里那一套，
+// 这样最后「接镜」那一幕才能和真实鱼缸无缝叠上。拿不到就退回画面自己的 0.8H。
+let FLOOR_Y = null;   // 鱼缸里沙床的高度（世界坐标）
+let STONE_X = null;   // 鲸之石中心 x
+let STONE_W = 92;     // 鲸之石宽度（鱼缸里固定 92）
+const FLOOR = (H) => FLOOR_Y ?? H * 0.8;
+const stoneX = (W) => STONE_X ?? W * 0.845;
+
 // ---------- 形状库 ----------
+
+// 体积光柱：和鱼缸里同款（水面斜射下来，随时间缓慢摆）
+function rays(ctx, W, H, t, a) {
+  if (a <= 0.01) return;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < 6; i++) {
+    const x = ((i + 0.5) / 6) * W + Math.sin(t * 0.06 + i * 1.7) * 46;
+    const tilt = 0.2 + Math.sin(t * 0.045 + i) * 0.07;
+    const topW = 26 + i * 9, botW = 170 + i * 46;
+    const al = Math.max(0.012, (0.085 - i * 0.009) + Math.sin(t * 0.3 + i * 2.2) * 0.012) * a;
+    const g = ctx.createLinearGradient(x, 0, x + tilt * H, H * 0.9);
+    g.addColorStop(0, `rgba(150,225,255,${al.toFixed(3)})`);
+    g.addColorStop(1, 'rgba(150,225,255,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(x - topW / 2, -12);
+    ctx.lineTo(x + topW / 2, -12);
+    ctx.lineTo(x + tilt * H + botW / 2, H * 0.88);
+    ctx.lineTo(x + tilt * H - botW / 2, H * 0.88);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// 海雪：三层视差的小白点缓缓下沉（和鱼缸里同款）
+let SNOW = [];
+function seedSnow() {
+  SNOW = [];
+  const layers = [[0.7, 5, 0.10], [1.2, 10, 0.16], [1.8, 16, 0.24]];
+  for (const [size, sp, alp] of layers) {
+    const n = Math.max(8, (innerWidth * innerHeight) / 34000);
+    for (let i = 0; i < n; i++) {
+      SNOW.push({
+        x: Math.random(), y: Math.random(), size: size * rand(0.7, 1.3),
+        sp: sp * rand(0.7, 1.3), a: alp, sway: rand(6, 20), seed: rand(0, 100),
+      });
+    }
+  }
+}
+function snow(ctx, W, H, t, a) {
+  if (a <= 0.01) return;
+  ctx.save();
+  ctx.fillStyle = '#cfe9f5';
+  for (const s of SNOW) {
+    const y = (((s.y + (t * s.sp) / H) % 1) + 1) % 1;
+    const x = (((s.x + (Math.sin(t * 0.3 + s.seed) * s.sway) / W) % 1) + 1) % 1;
+    ctx.globalAlpha = s.a * a;
+    ctx.beginPath();
+    ctx.arc(x * W, y * H, s.size, 0, TAU);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// 海水里的「活气」：光柱 + 海雪（从「化作海」那一幕开始出现）
+function ambient(ctx, W, H, t, a) {
+  rays(ctx, W, H, t, a);
+  snow(ctx, W, H, t, a);
+}
 
 // 星辰：暖光 + 四道光刺（老去的灵魂落在沙床上的那颗星）
 function memorialStar(ctx, x, y, r, a, t) {
@@ -267,7 +360,7 @@ function songRings(ctx, x, y, p, str) {
 // 海床：一条微微起伏的亮边 + 下方渐暗
 function floor(ctx, W, H, a) {
   if (a <= 0) return;
-  const fy = H * 0.8;
+  const fy = FLOOR(H);
   ctx.save();
   ctx.globalAlpha = a;
   const g = ctx.createLinearGradient(0, fy, 0, H);
@@ -406,7 +499,7 @@ function littleFish(ctx, W, H, fy, p, t) {
 }
 
 // 鲸之石：从沙里升起的石碑，鲸纹渐渐刻亮
-function whaleStone(ctx, x, fy, s, p, t) {
+function whaleStone(ctx, x, fy, s, p, t, full = false) {
   const h = s * 1.28, w = s;
   const y = fy + h * 0.18 - Math.min(1, p * 1.4) * h * 0.34;
   const lit = p > 0.35;
@@ -445,7 +538,10 @@ function whaleStone(ctx, x, fy, s, p, t) {
     ctx.shadowColor = 'rgba(111,227,255,.9)';
     ctx.shadowBlur = 9;
   }
-  ctx.strokeStyle = lit ? `rgba(190,245,255,${0.55 + Math.sin(t * 1.5) * 0.15})` : 'rgba(165,200,225,.38)';
+  // full = true 时用和鱼缸里一模一样的亮度（接镜那一幕要，免得溶解时忽明忽暗）
+  ctx.strokeStyle = full ? 'rgba(190,245,255,.92)'
+    : lit ? `rgba(190,245,255,${0.55 + Math.sin(t * 1.5) * 0.15})`
+      : 'rgba(165,200,225,.38)';
   ctx.beginPath();
   engraving(ctx);
   ctx.stroke();
@@ -568,6 +664,9 @@ const easeIn = (p) => p * p;
 
 let playing = false;
 
+// 收尾：最后这几秒整段动画溶进鱼缸（露出一模一样的海床与鲸之石）
+const DISSOLVE = 1.8;
+
 function fitCanvas(cv) {
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   cv.width = innerWidth * dpr;
@@ -579,19 +678,27 @@ function fitCanvas(cv) {
 
 /**
  * 放映序章。
- * opts.from  = 从第几幕开始（0 起，测试/预览用）
- * opts.speed = 播放速度倍率（1 = 正常；0.5 慢放，2 快放）
+ * opts.from    = 从第几幕开始（0 起，测试/预览用）
+ * opts.speed   = 播放速度倍率（1 = 正常；0.5 慢放，2 快放）
+ * opts.floorY  = 鱼缸里沙床的高度（对齐「接镜」用；不给就用画面自己的 0.8H）
+ * opts.stoneX  = 鱼缸里鲸之石的中心 x / opts.stoneW = 它的宽度
+ * opts.hudFade = 收尾时把 HUD 淡入（在鱼缸里播时为 true；标题页上是 false）
  */
 export function playGenesis(opts = {}) {
   if (playing) return;
   const from = Math.max(0, Math.min(STORYBOARD.length - 1, Math.floor(opts.from) || 0));
   const speed = Math.max(0.25, Math.min(3, Number(opts.speed) || 1));
+  FLOOR_Y = Number.isFinite(opts.floorY) ? opts.floorY : null;
+  STONE_X = Number.isFinite(opts.stoneX) ? opts.stoneX : null;
+  STONE_W = Number.isFinite(opts.stoneW) ? opts.stoneW : 92;
   playing = true;
   const ov = el('genesis-overlay');
   const cv = el('genesis-canvas');
   ov.classList.remove('hidden');
+  ov.style.transition = '';
   ov.style.opacity = '1';
   seedMotes();
+  seedSnow();
 
   const ctx = fitCanvas(cv);
   let raf = 0;
@@ -601,12 +708,33 @@ export function playGenesis(opts = {}) {
   let entered = from - 1;   // 已触发开头声音的分镜序号
   let ending = false;
 
+  // 收尾时 HUD 淡入：先跟着石碑现出来，再浮出界面（标题页上没这回事）
+  const hudEls = opts.hudFade ? [el('hud'), el('exit-bar')].filter(Boolean) : [];
+  let hudDone = false;
+  const showHud = () => {
+    if (hudDone || !hudEls.length) return;
+    hudDone = true;
+    for (const h of hudEls) { h.style.transition = 'none'; h.style.opacity = '0'; }
+    setTimeout(() => {
+      for (const h of hudEls) { h.style.transition = 'opacity 1.2s ease'; h.style.opacity = '1'; }
+    }, 400);
+  };
+  const resetHud = () => {
+    for (const h of hudEls) { h.style.transition = ''; h.style.opacity = ''; }
+  };
+
   const finish = () => {
     if (ending) return;
     ending = true;
     cancelAnimationFrame(raf);
     ov.style.opacity = '0';
-    setTimeout(() => { ov.classList.add('hidden'); playing = false; }, 900);
+    setTimeout(() => {
+      ov.classList.add('hidden');
+      ov.style.transition = '';
+      ov.style.opacity = '1';
+      resetHud();
+      playing = false;
+    }, 900);
   };
 
   const onSkip = (e) => { e.stopPropagation(); finish(); };
@@ -616,10 +744,17 @@ export function playGenesis(opts = {}) {
 
   const frame = (now) => {
     const t = ((now - start) / 1000) * speed;
-    // 结尾淡出
     if (t > TOTAL) { finish(); return; }
-    const fadeOut = t > TOTAL - 1.2 ? (TOTAL - t) / 1.2 : 1;
-    const fadeIn = Math.min(1, t / 2);
+    // 结尾不再淡成黑：整个画面溶进鱼缸，露出后面的真实海水
+    const dissolving = t > TOTAL - DISSOLVE;
+    let fade = Math.min(1, t / 2);
+    if (dissolving) {
+      fade = 1;
+      const k = Math.max(0, (TOTAL - t) / DISSOLVE);
+      ov.style.transition = 'none';
+      ov.style.opacity = String(k);
+      showHud();
+    }
 
     // 背景深海渐变
     ctx.clearRect(0, 0, innerWidth, innerHeight);
@@ -645,14 +780,14 @@ export function playGenesis(opts = {}) {
     const p = (t - acc) / sc.dur;
 
     ctx.save();
-    ctx.globalAlpha = fadeOut * fadeIn;
+    ctx.globalAlpha = fade;
     const art = ART[sc.art] || ART.quiet;
     art(p, ctx, innerWidth, innerHeight, t);
 
     // 字幕：本幕后 40% 处淡入，幕尾淡出（末幕标题除外，字幕靠后居中）
     const subA = p < 0.18 ? p / 0.18 : p > 0.86 ? (1 - p) / 0.14 : 1;
     if (sc.sub) {
-      ctx.globalAlpha = fadeOut * fadeIn * Math.max(0, subA);
+      ctx.globalAlpha = fade * Math.max(0, subA);
       ctx.textAlign = 'center';
       ctx.font = `${Math.round(19 * uiScale(innerWidth))}px ${FONT}`;
       ctx.fillStyle = 'rgba(205,228,242,0.92)';
@@ -671,14 +806,15 @@ export function playGenesis(opts = {}) {
 export const storyboard = STORYBOARD;
 
 // 自动触发：等所有面板都关上的「安静时刻」再开场（最多等 90 秒，否则放弃，可手动重看）
-export function armGenesis() {
+// play = 实际放映的函数（由 main.js 传入，好带上鱼缸的坐标）
+export function armGenesis(play = playGenesis) {
   const quiet = () => !document.querySelector('.overlay:not(.hidden)');
   let waited = 0;
   const iv = setInterval(() => {
     waited += 0.8;
     if (quiet()) {
       clearInterval(iv);
-      setTimeout(playGenesis, 1600);
+      setTimeout(play, 1600);
     } else if (waited > 90) {
       clearInterval(iv);
     }
