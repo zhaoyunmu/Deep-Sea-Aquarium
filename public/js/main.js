@@ -350,16 +350,23 @@ function unlockLore(key, text) {
   UI.toast(text, true);
   maybeGenesis();
 }
-// 放映序章：把鱼缸的坐标一起交给它——收尾的「接镜」要对齐真实的沙床与鲸之石，
-// 在缸里播时顺便让 HUD 跟着浮出来
+// 放映序章：把鱼缸的坐标一起交给它——收尾的「接镜」要对齐真实的沙床与鲸之石；
+// 收尾时一律进入游戏（从标题页进来的，就在那一刻收起标题页、让世界开始运转）
 function playGenesisHere(opts = {}) {
   playGenesis({
     ...opts,
     floorY: world.floorY,
     stoneX: whaleStone.x,
     stoneW: whaleStone.w,
-    hudFade: !worldPaused,
+    enterGame: enterGameFromGenesis,
   });
+}
+
+function enterGameFromGenesis() {
+  if (el('splash').classList.contains('hidden')) return; // 本来就在缸里
+  el('splash').classList.add('hidden');
+  worldPaused = false;
+  UI.showGameChrome();
 }
 
 // 四条低语集齐 → 上演藏在海底的故事（只自动演一次，之后可在设置里重看）

@@ -13,11 +13,13 @@ import { whaleCall } from './audio.js';
 //    sub  : 这一幕的字幕，一行中文；留空 '' 就是这一幕不显示字幕
 //    art  : 这一幕用哪段画面（见下面的「画面」一栏，换别的名字就是换画面）
 //    sound: 这一幕开头的声音：'' 无声 · 'call' 鲸鸣 · 'callSoft' 轻声鲸鸣
+//    fade : 可选。这一幕淡入要几秒（不写就用统一的 1.1 秒；写 0 就是硬切进来）
 //
 //  常用改法举例：
 //    · 觉得第一幕太长 → 把 dur: 6.5 改成 dur: 4
 //    · 想换文案 → 直接改 sub 引号里的中文（引号别删掉）
 //    · 想多看一会儿鲸之石 → 把那一幕 dur 调大，或者把鲸之石那一幕复制一行
+//    · 想让某一幕慢一点浮出来 → 给它加一个 fade: 2
 //
 //  注意：最后一行「接镜」是把动画交还给鱼缸的那一幕（海床高度、石碑位置都和鱼缸
 //  里对齐，所以能无缝溶进去）。它的 art 请保持 'arrival'，不然接不上了。
@@ -146,11 +148,10 @@ const ART = {
     motes(ctx, W, H, 0.55, 0.6);
   },
 
-  // 尾幕：标题浮现再归于暗
+  // 尾幕：标题浮现（收尾不再自己淡出，交给下一幕的渐隐渐显接过去）
   title(p, ctx, W, H) {
-    motes(ctx, W, H, 0.4 * (1 - p), 0.4);
-    const a = p < 0.12 ? p / 0.12 : p > 0.8 ? (1 - p) / 0.2 : 1;
-    titleCard(ctx, W, H, a);
+    motes(ctx, W, H, 0.4 * (1 - p * 0.5), 0.4);
+    titleCard(ctx, W, H, Math.min(1, p / 0.12));
   },
 
   // 接镜：镜头落回真实鱼缸——海床高度、鲸之石的位置和大小都和缸里一模一样，
@@ -666,6 +667,9 @@ let playing = false;
 
 // 收尾：最后这几秒整段动画溶进鱼缸（露出一模一样的海床与鲸之石）
 const DISSOLVE = 1.8;
+// 幕与幕之间的渐隐渐显（秒）：上一幕的画面淡出、下一幕淡入，不会硬切。
+// 想让切换更利落就调小（0 = 每幕直接硬切），想更缓慢就调大；单幕可在分镜表里写 fade: 1.6
+const SCENE_FADE = 1.1;
 
 function fitCanvas(cv) {
   const dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -678,11 +682,11 @@ function fitCanvas(cv) {
 
 /**
  * 放映序章。
- * opts.from    = 从第几幕开始（0 起，测试/预览用）
- * opts.speed   = 播放速度倍率（1 = 正常；0.5 慢放，2 快放）
- * opts.floorY  = 鱼缸里沙床的高度（对齐「接镜」用；不给就用画面自己的 0.8H）
- * opts.stoneX  = 鱼缸里鲸之石的中心 x / opts.stoneW = 它的宽度
- * opts.hudFade = 收尾时把 HUD 淡入（在鱼缸里播时为 true；标题页上是 false）
+ * opts.from      = 从第几幕开始（0 起，测试/预览用）
+ * opts.speed     = 播放速度倍率（1 = 正常；0.5 慢放，2 快放）
+ * opts.floorY    = 鱼缸里沙床的高度（对齐「接镜」用；不给就用画面自己的 0.8H）
+ * opts.stoneX    = 鱼缸里鲸之石的中心 x / opts.stoneW = 它的宽度
+ * opts.enterGame = 收尾时进入游戏（由 main.js 提供：收起标题页、让世界恢复运转）
  */
 export function playGenesis(opts = {}) {
   if (playing) return;
@@ -691,6 +695,7 @@ export function playGenesis(opts = {}) {
   FLOOR_Y = Number.isFinite(opts.floorY) ? opts.floorY : null;
   STONE_X = Number.isFinite(opts.stoneX) ? opts.stoneX : null;
   STONE_W = Number.isFinite(opts.stoneW) ? opts.stoneW : 92;
+  const enterGame = typeof opts.enterGame === 'function' ? opts.enterGame : null;
   playing = true;
   const ov = el('genesis-overlay');
   const cv = el('genesis-canvas');
@@ -701,6 +706,7 @@ export function playGenesis(opts = {}) {
   seedSnow();
 
   const ctx = fitCanvas(cv);
+  const buf = makeBuffer(cv.width, cv.height);   // 幕间渐隐用的离屏画布
   let raf = 0;
   // 从第 from 幕开始：把「已经过去的时间」预先扣掉，后面的分幕逻辑就不用改
   const skipped = STORYBOARD.slice(0, from).reduce((a, s) => a + s.dur, 0);
@@ -708,12 +714,13 @@ export function playGenesis(opts = {}) {
   let entered = from - 1;   // 已触发开头声音的分镜序号
   let ending = false;
 
-  // 收尾时 HUD 淡入：先跟着石碑现出来，再浮出界面（标题页上没这回事）
-  const hudEls = opts.hudFade ? [el('hud'), el('exit-bar')].filter(Boolean) : [];
+  // 收尾：海床与石碑先现出来，界面再浮上来（到这一刻已经算进入游戏了）
+  const hudEls = [el('hud'), el('exit-bar')].filter(Boolean);
   let hudDone = false;
   const showHud = () => {
-    if (hudDone || !hudEls.length) return;
+    if (hudDone) return;
     hudDone = true;
+    if (enterGame) enterGame();   // 标题页进来的：这时候收起标题页、世界开始运转
     for (const h of hudEls) { h.style.transition = 'none'; h.style.opacity = '0'; }
     setTimeout(() => {
       for (const h of hudEls) { h.style.transition = 'opacity 1.2s ease'; h.style.opacity = '1'; }
@@ -742,10 +749,16 @@ export function playGenesis(opts = {}) {
   const onKey = (e) => { if (e.key === 'Escape' || e.key === ' ') finish(); };
   window.addEventListener('keydown', onKey, { once: true });
 
+  // 把某一幕的某个进度画到指定画布上（字幕另画）
+  const drawArt = (g, scene, prog, W, H, t) => {
+    const art = ART[scene.art] || ART.quiet;
+    art(prog, g, W, H, t);
+  };
+
   const frame = (now) => {
     const t = ((now - start) / 1000) * speed;
     if (t > TOTAL) { finish(); return; }
-    // 结尾不再淡成黑：整个画面溶进鱼缸，露出后面的真实海水
+    // 收尾不再淡成黑：整个画面溶进鱼缸，露出后面的真实海水
     const dissolving = t > TOTAL - DISSOLVE;
     let fade = Math.min(1, t / 2);
     if (dissolving) {
@@ -756,14 +769,15 @@ export function playGenesis(opts = {}) {
       showHud();
     }
 
+    const W = innerWidth, H = innerHeight;
     // 背景深海渐变
-    ctx.clearRect(0, 0, innerWidth, innerHeight);
-    const bg = ctx.createLinearGradient(0, 0, 0, innerHeight);
+    ctx.clearRect(0, 0, W, H);
+    const bg = ctx.createLinearGradient(0, 0, 0, H);
     bg.addColorStop(0, '#04101f');
     bg.addColorStop(0.55, '#03101d');
     bg.addColorStop(1, '#010509');
     ctx.fillStyle = bg;
-    ctx.fillRect(0, 0, innerWidth, innerHeight);
+    ctx.fillRect(0, 0, W, H);
 
     // 找到当前分镜
     let acc = 0, idx = 0;
@@ -779,27 +793,53 @@ export function playGenesis(opts = {}) {
     }
     const p = (t - acc) / sc.dur;
 
+    // 幕与幕之间渐隐渐显：上一幕停在它结束的那一刻，这一幕淡着盖上来
+    const fadeSec = sc.fade ?? SCENE_FADE;
+    const cross = idx > 0 && fadeSec > 0 ? Math.min(1, (t - acc) / fadeSec) : 1;
+
     ctx.save();
     ctx.globalAlpha = fade;
-    const art = ART[sc.art] || ART.quiet;
-    art(p, ctx, innerWidth, innerHeight, t);
+    if (cross < 1) {
+      // 幕与幕的交叉渐隐：上一幕淡出、这一幕淡入，两边各自过一遍离屏画布
+      // （画面里的元素会自己设 globalAlpha，所以只能先画到离屏再整体压透明度）
+      const g = buf.ctx;
+      const paint = (scene, prog, alpha) => {
+        g.setTransform(1, 0, 0, 1, 0, 0);
+        g.clearRect(0, 0, buf.cv.width, buf.cv.height);
+        drawArt(g, scene, prog, W, H, t);
+        ctx.globalAlpha = fade * alpha;
+        ctx.drawImage(buf.cv, 0, 0, W, H);
+      };
+      paint(STORYBOARD[idx - 1], 1, 1 - cross);   // 上一幕的结尾，淡出
+      paint(sc, p, cross);                        // 这一幕的开头，淡入
+    } else {
+      drawArt(ctx, sc, p, W, H, t);
+    }
 
-    // 字幕：本幕后 40% 处淡入，幕尾淡出（末幕标题除外，字幕靠后居中）
+    // 字幕：本幕后 40% 处淡入，幕尾淡出
     const subA = p < 0.18 ? p / 0.18 : p > 0.86 ? (1 - p) / 0.14 : 1;
     if (sc.sub) {
-      ctx.globalAlpha = fade * Math.max(0, subA);
+      ctx.globalAlpha = fade * cross * Math.max(0, subA);
       ctx.textAlign = 'center';
-      ctx.font = `${Math.round(19 * uiScale(innerWidth))}px ${FONT}`;
+      ctx.font = `${Math.round(19 * uiScale(W))}px ${FONT}`;
       ctx.fillStyle = 'rgba(205,228,242,0.92)';
       ctx.shadowColor = 'rgba(0,10,20,0.9)';
       ctx.shadowBlur = 8;
-      ctx.fillText(sc.sub, innerWidth / 2, innerHeight * 0.9);
+      ctx.fillText(sc.sub, W / 2, H * 0.9);
     }
     ctx.restore();
 
     if (!ending) raf = requestAnimationFrame(frame);
   };
   raf = requestAnimationFrame(frame);
+}
+
+// 幕间渐隐用的离屏画布（和主画布同尺寸，避免两条画面互相抢 globalAlpha）
+function makeBuffer(w, h) {
+  const cv = document.createElement('canvas');
+  cv.width = w;
+  cv.height = h;
+  return { cv, ctx: cv.getContext('2d') };
 }
 
 /** 分镜清单（给 /genesis list 用） */
