@@ -4,6 +4,7 @@
 
 import { TAU, rand, el } from './util.js';
 import { whaleCall } from './audio.js';
+import { Jellyfish } from './jellyfish.js';
 
 // ============================================================================
 //  分镜表 —— 这一块是留给你自己改的：改完保存，刷新页面（或点设置里的「🐋 序章」）就能看
@@ -26,7 +27,7 @@ import { whaleCall } from './audio.js';
 // ============================================================================
 const STORYBOARD = [
   { name: '静海', dur: 6.5, art: 'quiet', sound: '', sub: '很久以前，海比现在更安静。有一个声音，比浪潮还要低……' },
-  { name: '鲸之歌', dur: 9, art: 'song', sound: 'call', sub: '那是巨鲸的歌。它唱了一千年，海就听了一千年。' },
+  { name: '鲸之歌', dur: 13, art: 'song', sound: 'call', sub: '那是巨鲸的歌。它唱了一千年，海就听了一千年。' },
   { name: '下沉', dur: 8.5, art: 'sink', sound: 'callSoft', sub: '唱完最后一支歌，它缓缓沉了下去。' },
   { name: '化作海', dur: 10, art: 'become', sound: '', sub: '它不是消失了——只是把自己铺成了这片海。' },
   { name: '澜', dur: 8.5, art: 'witness', sound: '', sub: '古老的水母看见了这一切。从那天起，她再也没有离开。' },
@@ -50,14 +51,14 @@ const ART = {
     motes(ctx, W, H, 0.35 * p, 0.5);
   },
 
-  // 鲸之歌：巨鲸横穿画面，歌声一圈圈荡开
+  // 鲸之歌：巨鲸缓缓横穿画面，歌声从头部一圈圈荡开，尾巴大幅度地摆
   song(p, ctx, W, H) {
     const s = Math.min(W, H) * 0.42;
     const x = -s * 1.6 + p * (W + s * 3.2);
     const y = H * (0.44 + Math.sin(p * 3) * 0.01);
     backlight(ctx, x, y, s * 2.1, 0.9);
-    songRings(ctx, x - s * 0.9, y, p, 1);
-    whale(ctx, x, y, s, 0.9 - p * 0.15, Math.sin(p * 6) * 0.6);
+    songRings(ctx, x + s * 0.9, y, p, 1);        // 鲸头朝右，声音从头部传出
+    whale(ctx, x, y, s, 0.9 - p * 0.15, Math.sin(p * 18));
     motes(ctx, W, H, 0.5, 0.6);
   },
 
@@ -67,11 +68,11 @@ const ART = {
     const x = W * 0.46 + p * W * 0.05;
     const y = H * 0.42 + p * H * 0.22;
     backlight(ctx, x, y, s * 2.0, 0.8 * (1 - p * 0.5));
-    songRings(ctx, x - s * 0.9, y, p, 1 - p * 0.8);
+    songRings(ctx, x + s * 0.9, y, p, 1 - p * 0.8);   // 头部
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(p * 0.24);
-    whale(ctx, 0, 0, s, (0.9 - p * 0.55) * (1 - easeIn(p) * 0.3), Math.sin(p * 4) * 0.3 * (1 - p));
+    whale(ctx, 0, 0, s, (0.9 - p * 0.55) * (1 - easeIn(p) * 0.3), Math.sin(p * 6) * 0.5 * (1 - p));
     ctx.restore();
     motes(ctx, W, H, 0.5, 0.5);
   },
@@ -93,27 +94,31 @@ const ART = {
     motes(ctx, W, H, 0.5, 0.7);
   },
 
-  // 澜：古老的水母从沙床后面升起来
-  witness(p, ctx, W, H, t) {
+  // 澜：游戏里那只真水母（月水母 · 桃粉）从沙床后面升起来，脉冲、触手都是活的
+  witness(p, ctx, W, H, t, dt) {
     const fy = FLOOR(H);
     ambient(ctx, W, H, t, 1);
+    ensureJellies();
     // 先快后慢：探出沙面很快，之后慢慢飘高（先画她、再画沙床，才是从沙里升起来）
     const rise = 1 - Math.pow(1 - p, 2);
-    jelly(ctx, W * 0.5, fy + 90 - rise * H * 0.62, Math.min(W, H) * 0.15, Math.min(1, p * 2.2));
+    moveJelly(LAN, W * 0.5, fy + 90 - rise * H * 0.62, dt);
+    LAN.draw(ctx, t);
     floor(ctx, W, H, 1);
     kelp(ctx, W, H, fy, 1, 6, 0.1 + p * 0.2);
     motes(ctx, W, H, 0.55, 0.5);
   },
 
-  // 万灵诞生：卵、小鱼、小水母，以及一颗落进沙床的星辰
-  born(p, ctx, W, H, t) {
+  // 万灵诞生：卵、小鱼、小水母（真的灯辉水母），以及一颗落进沙床的星辰
+  born(p, ctx, W, H, t, dt) {
     const fy = FLOOR(H);
     ambient(ctx, W, H, t, 1);
     floor(ctx, W, H, 1);
     kelp(ctx, W, H, fy, 1, 7, 0.3);
     eggs(ctx, W, fy, p);
     littleFish(ctx, W, H, fy, p, t);
-    jelly(ctx, W * 0.16, H * 0.45 + Math.sin(t * 0.5) * 8, Math.min(W, H) * 0.08, 1);
+    ensureJellies();
+    moveJelly(MO, W * 0.16, H * 0.45 + Math.sin(t * 0.5) * 8, dt);
+    MO.draw(ctx, t);
     // 老去的灵魂化作星辰：一颗星从上方的水里缓缓落到沙床上
     if (p > 0.3) {
       const sp = Math.min(1, (p - 0.3) / 0.42);
@@ -292,7 +297,7 @@ function backlight(ctx, x, y, r, a) {
 }
 
 // 巨鲸剪影：与世界鲸影同一套连续轮廓（身+尾一线，后段随摆尾渐进弯曲）
-function whale(ctx, x, y, s, alpha, stroke) {  const bendStart = -s * 0.25, rearLen = s * 1.15, maxBend = stroke * 0.18;
+function whale(ctx, x, y, s, alpha, stroke) {  const bendStart = -s * 0.25, rearLen = s * 1.15, maxBend = stroke * 0.26;
   const bendPt = (px, py) => {
     if (px >= bendStart) return [px, py];
     const tt = Math.min(1, (bendStart - px) / rearLen);
@@ -412,46 +417,27 @@ function kelp(ctx, W, H, fy, a, n, sway) {
   ctx.restore();
 }
 
-// 澜：巨大水母的剪影，伞盖呼吸 + 长须飘垂
-function jelly(ctx, x, y, r, glow) {
-  ctx.save();
-  ctx.translate(x, y);
-  // 体光
-  const lg = ctx.createRadialGradient(0, 0, r * 0.2, 0, 0, r * 2.4);
-  lg.addColorStop(0, `rgba(150,220,255,${0.14 * glow})`);
-  lg.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = lg;
-  ctx.fillRect(-r * 2.6, -r * 2.6, r * 5.2, r * 5.2);
-  // 长须
-  ctx.strokeStyle = 'rgba(150,215,250,0.35)';
-  ctx.lineWidth = 1.6;
-  for (let i = 0; i < 7; i++) {
-    const ox = (i - 3) * r * 0.24;
-    ctx.beginPath();
-    ctx.moveTo(ox, r * 0.15);
-    ctx.bezierCurveTo(
-      ox + Math.sin(i * 2.1) * r * 0.2, r * 1.1,
-      ox - Math.sin(i * 1.3) * r * 0.25, r * 2.0,
-      ox + Math.sin(i * 0.9) * r * 0.3, r * 2.9,
-    );
-    ctx.stroke();
+// 澜与一只小灯辉：直接用游戏里的 Jellyfish 实体（脉冲游动 + verlet 触手都是活的）。
+// 位置由分镜说了算：每帧先把坐标摆到位再 update（触手根跟着走、链子自然摆动），
+// update 之后的漂移忽略不计。
+let LAN = null, MO = null;
+function ensureJellies() {
+  if (!LAN) {
+    LAN = new Jellyfish(innerWidth, innerHeight, 0);          // 月水母 · 桃粉（澜）
+    LAN.r = Math.min(innerWidth, innerHeight) * 0.115;
+    LAN._rebuildLimbs();
   }
-  // 伞盖（呼吸）
-  const pulse = 1 + Math.sin(performance.now() / 900) * 0.05;
-  ctx.beginPath();
-  ctx.ellipse(0, 0, r * pulse, r * 0.72 * pulse, 0, Math.PI, 0);
-  ctx.closePath();
-  ctx.fillStyle = 'rgba(9,28,48,0.92)';
-  ctx.fill();
-  ctx.strokeStyle = `rgba(160,225,255,${0.4 * glow})`;
-  ctx.lineWidth = 2;
-  ctx.stroke();
-  // 伞缘微光
-  ctx.beginPath();
-  ctx.ellipse(0, 0, r * pulse, r * 0.72 * pulse, 0, Math.PI, 0);
-  ctx.strokeStyle = `rgba(190,240,255,${0.18 * glow})`;
-  ctx.stroke();
-  ctx.restore();
+  if (!MO) {
+    MO = new Jellyfish(innerWidth, innerHeight, 1);           // 灯辉水母 · 青蓝（小只）
+    MO.r = Math.min(innerWidth, innerHeight) * 0.055;
+    MO._rebuildLimbs();
+  }
+}
+function moveJelly(j, x, y, dt) {
+  j.x = x; j.y = y;
+  j.vx = 0; j.vy = 0;
+  if (dt > 0) j.update(dt, performance.now() / 1000, innerWidth, innerHeight);
+  j.x = x; j.y = y;   // 位置只听分镜的
 }
 
 // 卵：沙床上一排微微发光的小圆
@@ -766,13 +752,16 @@ export function playGenesis(opts = {}) {
   const onKey = (e) => { if (e.key === 'Escape' || e.key === ' ') finish(); };
   window.addEventListener('keydown', onKey, { once: true });
 
-  // 把某一幕的某个进度画到指定画布上（字幕另画）
-  const drawArt = (g, scene, prog, W, H, t) => {
+  // 把某一幕的某个进度画到指定画布上（字幕另画；dt 供真水母的触手物理用）
+  let lastNow = performance.now();
+  const drawArt = (g, scene, prog, W, H, t, dt) => {
     const art = ART[scene.art] || ART.quiet;
-    art(prog, g, W, H, t);
+    art(prog, g, W, H, t, dt);
   };
 
   const frame = (now) => {
+    const dt = Math.min(0.05, Math.max(0.001, (now - lastNow) / 1000));
+    lastNow = now;
     const t = ((now - start) / 1000) * speed;
     if (t > TOTAL) { finish(); return; }
     // 收尾不再淡成黑：整个画面溶进鱼缸，露出后面的真实海水
@@ -823,14 +812,14 @@ export function playGenesis(opts = {}) {
       const paint = (scene, prog, alpha) => {
         g.setTransform(1, 0, 0, 1, 0, 0);
         g.clearRect(0, 0, buf.cv.width, buf.cv.height);
-        drawArt(g, scene, prog, W, H, t);
+        drawArt(g, scene, prog, W, H, t, dt);
         ctx.globalAlpha = fade * alpha;
         ctx.drawImage(buf.cv, 0, 0, W, H);
       };
       paint(STORYBOARD[idx - 1], 1, 1 - cross);   // 上一幕的结尾，淡出
       paint(sc, p, cross);                        // 这一幕的开头，淡入
     } else {
-      drawArt(ctx, sc, p, W, H, t);
+      drawArt(ctx, sc, p, W, H, t, dt);
     }
 
     // 字幕：本幕后 40% 处淡入，幕尾淡出
