@@ -733,6 +733,7 @@ export function playGenesis(opts = {}) {
     if (ending) return;
     ending = true;
     cancelAnimationFrame(raf);
+    clearInterval(kicker);
     ov.style.opacity = '0';
     ov.style.pointerEvents = 'none';   // 淡出的这段时间不再挡点击
     setTimeout(() => {
@@ -754,12 +755,14 @@ export function playGenesis(opts = {}) {
 
   // 把某一幕的某个进度画到指定画布上（字幕另画；dt 供真水母的触手物理用）
   let lastNow = performance.now();
+  let lastFrameAt = lastNow;
   const drawArt = (g, scene, prog, W, H, t, dt) => {
     const art = ART[scene.art] || ART.quiet;
     art(prog, g, W, H, t, dt);
   };
 
   const frame = (now) => {
+    lastFrameAt = performance.now();
     const dt = Math.min(0.05, Math.max(0.001, (now - lastNow) / 1000));
     lastNow = now;
     const t = ((now - start) / 1000) * speed;
@@ -838,6 +841,14 @@ export function playGenesis(opts = {}) {
     if (!ending) raf = requestAnimationFrame(frame);
   };
   raf = requestAnimationFrame(frame);
+
+  // rAF 兜底：浏览器面板不在前台时 Chrome 会完全停掉动画帧（页面却报 visible），
+  // 序章就会黑在那里。定时器不受这种停摆影响——rAF 超过 200ms 没跑，就自己推一帧。
+  // 时间戳永远取真实时钟，所以帧率再低，剧情进度也和现实同步，不会错拍。
+  const kicker = setInterval(() => {
+    if (ending) return;
+    if (performance.now() - lastFrameAt > 200) frame(performance.now());
+  }, 200);
 }
 
 // 幕间渐隐用的离屏画布（和主画布同尺寸，避免两条画面互相抢 globalAlpha）
